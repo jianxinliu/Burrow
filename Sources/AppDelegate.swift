@@ -22,7 +22,7 @@
 import Cocoa
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Singleton handle so SwiftUI views can reach the live
     /// Maintenance / Sampler / DB without threading them through every
     /// initializer.
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// across the window-creation boundary; cleared once the window's
     /// content view reads it.
     private var mainWC: NSWindowController?
-    fileprivate var pendingInitialSection: BurrowSection = .overview
+    fileprivate var pendingInitialTool: Tool = .status
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -80,6 +80,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         maintenance.start()
 
         self.statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+
+        // Dev affordance: launch with BURROW_OPEN_ON_LAUNCH=1 to pop the
+        // main window straight away (used for screenshot/verify loops).
+        if let tab = Foundation.ProcessInfo.processInfo.environment["BURROW_OPEN_ON_LAUNCH"],
+           #available(macOS 14, *) {
+            self.openMainWindow(initial: Tool(rawValue: tab) ?? .status)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -95,33 +102,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window forward. Used by every popover action button —
     /// `openMainWindow(initial: .cleanup)` etc.
     @available(macOS 14.0, *)
-    func openMainWindow(initial: BurrowSection = .overview) {
-        // If already open, route through the existing controller +
-        // root view's selection binding.
+    func openMainWindow(initial: Tool = .status) {
+        // If already open, just re-theme to the requested tool and bring
+        // the window forward.
         if let wc = self.mainWC, let window = wc.window {
-            self.pendingInitialSection = initial
-            // Tear down + rebuild content so the .task on MainView
-            // sees the new initial section. Cheap — just rebuilds
-            // SwiftUI hierarchy.
+            self.pendingInitialTool = initial
             self.installMainContent(into: window, initial: initial)
+            NSApp.setActivationPolicy(.regular)   // Dock icon while open
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        guard let db = self.db, let sampler = self.sampler else { return }
+        guard self.db != nil, self.sampler != nil else { return }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 740),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false)
+        // Frameless-feeling translucent shell: transparent titlebar with
+        // the traffic lights floating over content, a clear non-opaque
+        // window so the behind-window vibrancy can sample the wallpaper,
+        // and drag-anywhere so there's no visible chrome bar.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.toolbarStyle = .unified
         window.title = "Burrow"
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.isMovableByWindowBackground = true
         window.center()
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 900, height: 580)
-        _ = (db, sampler)  // capture only via installMainContent below
+        window.minSize = NSSize(width: 940, height: 640)
+        window.delegate = self
+
+        // Show a Dock icon (and Cmd-Tab presence) while the dashboard is
+        // open; we drop back to a pure menu-bar agent when it closes.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.applicationIconImage = AppDelegate.dockIcon
 
         let wc = NSWindowController(window: window)
         self.mainWC = wc
@@ -131,10 +147,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @available(macOS 14.0, *)
-    private func installMainContent(into window: NSWindow, initial: BurrowSection) {
+    private func installMainContent(into window: NSWindow, initial: Tool) {
         guard let db = self.db, let sampler = self.sampler else { return }
-        let root = MainView(db: db, sampler: sampler, delegate: self,
-                            initialSelection: initial)
-        window.contentViewController = NSHostingController(rootView: root)
+        let root = RootView(db: db, sampler: sampler, delegate: self, initialTool: initial)
+        let host = NSHostingController(rootView: root)
+        host.view.wantsLayer = true
+        host.view.layer?.backgroundColor = .clear
+        window.contentViewController = host
     }
+
+    // MARK: - Window delegate
+
+    func windowWillClose(_ notification: Notification) {
+        // Dashboard closed → back to a pure menu-bar agent (no Dock icon).
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    // MARK: - Dock icon
+
+    /// Burrow's mark drawn into an app icon: a cream disc with the dark
+    /// burrow mouth on a rounded espresso tile. Programmatic for now so we
+    /// don't need an asset-catalog AppIcon.
+    static let dockIcon: NSImage = {
+        let size = NSSize(width: 512, height: 512)
+        let img = NSImage(size: size)
+        img.lockFocus()
+        let full = NSRect(origin: .zero, size: size)
+
+        let tile = NSBezierPath(roundedRect: full.insetBy(dx: 26, dy: 26), xRadius: 110, yRadius: 110)
+        NSColor(srgbRed: 0.14, green: 0.11, blue: 0.07, alpha: 1).setFill()
+        tile.fill()
+
+        let disc = full.insetBy(dx: 116, dy: 116)
+        NSColor(srgbRed: 0.95, green: 0.92, blue: 0.86, alpha: 1).setFill()
+        NSBezierPath(ovalIn: disc).fill()
+
+        let cx = full.midX
+        let baseY = full.height * 0.44
+        let r = full.width * 0.17
+        let dome = NSBezierPath()
+        dome.move(to: NSPoint(x: cx - r, y: baseY))
+        dome.appendArc(withCenter: NSPoint(x: cx, y: baseY), radius: r,
+                       startAngle: 180, endAngle: 0, clockwise: true)
+        dome.close()
+        NSColor(srgbRed: 0.14, green: 0.11, blue: 0.07, alpha: 1).setFill()
+        dome.fill()
+
+        img.unlockFocus()
+        return img
+    }()
 }

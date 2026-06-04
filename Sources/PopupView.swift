@@ -128,7 +128,7 @@ struct PopupView: View {
         VStack(spacing: Theme.Spacing.xs) {
             Button {
                 if #available(macOS 14, *) {
-                    self.delegate?.openMainWindow(initial: .overview)
+                    self.delegate?.openMainWindow(initial: .status)
                 }
             } label: {
                 HStack {
@@ -146,18 +146,18 @@ struct PopupView: View {
             .keyboardShortcut(.return)
 
             HStack(spacing: Theme.Spacing.xs) {
-                deepLink(title: "History",  symbol: "chart.line.uptrend.xyaxis", section: .history)
-                deepLink(title: "Disk Map", symbol: "square.grid.3x3.fill",        section: .diskMap)
-                deepLink(title: "Cleanup",  symbol: "trash",                         section: .cleanup)
-                deepLink(title: "Settings", symbol: "gearshape",                     section: .settings)
+                deepLink(title: "Status",   symbol: "waveform.path.ecg", tool: .status)
+                deepLink(title: "Analyze",  symbol: "square.grid.2x2",   tool: .analyze)
+                deepLink(title: "Clean",    symbol: "sparkles",          tool: .clean)
+                deepLink(title: "Software", symbol: "shippingbox",       tool: .apps)
             }
         }
     }
 
     @available(macOS 14.0, *)
-    private func deepLink(title: String, symbol: String, section: BurrowSection) -> some View {
+    private func deepLink(title: String, symbol: String, tool: Tool) -> some View {
         Button {
-            self.delegate?.openMainWindow(initial: section)
+            self.delegate?.openMainWindow(initial: tool)
         } label: {
             VStack(spacing: 2) {
                 Image(systemName: symbol).imageScale(.small)

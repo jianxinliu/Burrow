@@ -98,73 +98,68 @@ enum Treemap {
         return max(a, b)
     }
 
-    /// Place `row`'s rectangles along the shorter side of `bounds`.
-    /// They share a thickness determined by sum(row) / longerSide; their
-    /// extent along the shorter side is proportional to each weight.
+    /// Place `row`'s rectangles along the SHORTER side of `bounds` — the
+    /// squarified convention, and what `worstAspect` above assumes. The
+    /// strip's thickness (perpendicular to the shorter side) is
+    /// rowArea / shorterSide; each item's extent along the shorter side
+    /// is proportional to its weight, so the row's items sum to the full
+    /// shorter side.
+    ///
+    /// (The earlier version laid rows along the *longer* side, which is
+    /// inconsistent with the aspect metric and degenerates into
+    /// full-width horizontal strips for steeply-skewed inputs — i.e. a
+    /// real folder tree. This is the fix for that.)
     private static func placeRow(_ row: [Double], in bounds: CGRect) -> [CGRect] {
         let shorter = min(bounds.width, bounds.height)
         let s = row.reduce(0, +)
         guard shorter > 0, s > 0 else {
             return Array(repeating: .zero, count: row.count)
         }
-        // Thickness of the row strip: total row area divided by the
-        // long side it spans.
-        let longer = max(bounds.width, bounds.height)
-        let thickness = CGFloat(s) / longer
+        let thickness = CGFloat(s) / shorter
         var rects: [CGRect] = []
         rects.reserveCapacity(row.count)
 
         if bounds.width >= bounds.height {
-            // Lay the row along the bottom edge (extent = horizontal,
-            // thickness = vertical). Actually: the shorter side is
-            // height here, so row strip is the height ribbon spanning
-            // the width. Extent of each rect = w*thickness/total ≠ —
-            // walk through it.
-            // The strip occupies a sub-rect of height `thickness` at
-            // the *short* end of `bounds`. Each item splits the strip
-            // across the long axis proportionally to its weight.
-            var x = bounds.minX
-            let y = bounds.minY
-            for w in row {
-                let width = CGFloat(w) / thickness
-                rects.append(CGRect(x: x, y: y, width: width, height: thickness))
-                x += width
-            }
-        } else {
-            // bounds.height > bounds.width: shorter side is width;
-            // strip is a vertical ribbon of width `thickness`. Each
-            // item splits along the vertical (height) axis.
+            // Shorter side is the height → vertical column on the left
+            // edge, items stacked top→bottom, column width = thickness.
             let x = bounds.minX
             var y = bounds.minY
             for w in row {
-                let height = CGFloat(w) / thickness
-                rects.append(CGRect(x: x, y: y, width: thickness, height: height))
-                y += height
+                let h = CGFloat(w) / thickness   // == w * height / s
+                rects.append(CGRect(x: x, y: y, width: thickness, height: h))
+                y += h
+            }
+        } else {
+            // Shorter side is the width → horizontal band on the top
+            // edge, items left→right, band height = thickness.
+            var x = bounds.minX
+            let y = bounds.minY
+            for w in row {
+                let wd = CGFloat(w) / thickness  // == w * width / s
+                rects.append(CGRect(x: x, y: y, width: wd, height: thickness))
+                x += wd
             }
         }
         return rects
     }
 
-    /// Trim the remaining rectangle after placing a row's strip — the
-    /// row occupied the short-side ribbon, so we shrink in that
-    /// direction.
+    /// Trim the strip the row just consumed off the shorter side.
     private static func trimRemaining(after rowRects: [CGRect], from bounds: CGRect) -> CGRect {
         guard let first = rowRects.first else { return bounds }
         if bounds.width >= bounds.height {
-            // Strip ran along the bottom (vertical ribbon of `thickness`
-            // height occupying the full available height? no — actually
-            // thickness consumed `first.height` of vertical space).
-            let consumed = first.height
-            return CGRect(x: bounds.minX,
-                          y: bounds.minY + consumed,
-                          width: bounds.width,
-                          height: max(0, bounds.height - consumed))
-        } else {
+            // Consumed a vertical column of `thickness` width on the left.
             let consumed = first.width
             return CGRect(x: bounds.minX + consumed,
                           y: bounds.minY,
                           width: max(0, bounds.width - consumed),
                           height: bounds.height)
+        } else {
+            // Consumed a horizontal band of `thickness` height on top.
+            let consumed = first.height
+            return CGRect(x: bounds.minX,
+                          y: bounds.minY + consumed,
+                          width: bounds.width,
+                          height: max(0, bounds.height - consumed))
         }
     }
 }

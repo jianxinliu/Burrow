@@ -36,6 +36,8 @@ struct MoleStatus: Codable {
     let batteries: [BatteryStatus]?
     let thermal: ThermalStatus?
     let topProcesses: [ProcessInfo]?
+    let gpu: [GPUStatus]?
+    let proxy: ProxyStatus?
 
     // Mole emits ISO8601 with sub-second precision (`2026-05-31T01:33:40.112723-07:00`).
     // The default ISO formatter rejects fractional seconds, so we configure
@@ -51,6 +53,7 @@ struct MoleStatus: Codable {
         case diskIO = "disk_io"
         case disks, network, batteries, thermal
         case topProcesses = "top_processes"
+        case gpu, proxy
     }
 
     init(from decoder: Decoder) throws {
@@ -77,6 +80,8 @@ struct MoleStatus: Codable {
         self.batteries = try c.decodeIfPresent([BatteryStatus].self, forKey: .batteries)
         self.thermal = try c.decodeIfPresent(ThermalStatus.self, forKey: .thermal)
         self.topProcesses = try c.decodeIfPresent([ProcessInfo].self, forKey: .topProcesses)
+        self.gpu = try c.decodeIfPresent([GPUStatus].self, forKey: .gpu)
+        self.proxy = try c.decodeIfPresent(ProxyStatus.self, forKey: .proxy)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -100,6 +105,8 @@ struct MoleStatus: Codable {
         try c.encodeIfPresent(batteries, forKey: .batteries)
         try c.encodeIfPresent(thermal, forKey: .thermal)
         try c.encodeIfPresent(topProcesses, forKey: .topProcesses)
+        try c.encodeIfPresent(gpu, forKey: .gpu)
+        try c.encodeIfPresent(proxy, forKey: .proxy)
     }
 
     private static let iso8601: ISO8601DateFormatter = {
@@ -244,4 +251,29 @@ struct ProcessInfo: Codable {
     let command: String
     let cpu: Double
     let memory: Double
+}
+
+struct GPUStatus: Codable {
+    let name: String
+    /// `-1` when the platform can't report GPU utilisation (common on
+    /// Apple Silicon); treat negative as "unavailable".
+    let usage: Double
+    let memoryUsed: UInt64
+    let memoryTotal: UInt64
+    let coreCount: Int
+    let note: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, usage
+        case memoryUsed = "memory_used"
+        case memoryTotal = "memory_total"
+        case coreCount = "core_count"
+        case note
+    }
+}
+
+struct ProxyStatus: Codable {
+    let enabled: Bool
+    let type: String
+    let host: String
 }
