@@ -21,16 +21,16 @@ enum Tool: String, CaseIterable, Identifiable {
     static let navOrder: [Tool] = [.clean, .apps, .optimize, .analyze, .status]
 
     /// Lowercase tab label (matches the instrument-panel voice).
-    var label: String { rawValue }
+    var label: String { NSLocalizedString(rawValue, comment: "") }
 
     /// Title-case name for heroes / headings.
     var title: String {
         switch self {
-        case .clean:    return "Clean"
-        case .apps:     return "Software"
-        case .optimize: return "Optimize"
-        case .analyze:  return "Analyze"
-        case .status:   return "Status"
+        case .clean:    return NSLocalizedString("Clean", comment: "")
+        case .apps:     return NSLocalizedString("Software", comment: "")
+        case .optimize: return NSLocalizedString("Optimize", comment: "")
+        case .analyze:  return NSLocalizedString("Analyze", comment: "")
+        case .status:   return NSLocalizedString("Status", comment: "")
         }
     }
 
@@ -76,11 +76,11 @@ enum Tool: String, CaseIterable, Identifiable {
     /// Our own one-liner per tool — earthy, in keeping with the name.
     var tagline: String {
         switch self {
-        case .clean:    return "Fresh air through old tunnels."
-        case .apps:     return "Shed what you've outgrown."
-        case .optimize: return "Small turns, a smoother run."
-        case .analyze:  return "Map every chamber below."
-        case .status:   return "Every pulse of the den."
+        case .clean:    return NSLocalizedString("Fresh air through old tunnels.", comment: "")
+        case .apps:     return NSLocalizedString("Shed what you've outgrown.", comment: "")
+        case .optimize: return NSLocalizedString("Small turns, a smoother run.", comment: "")
+        case .analyze:  return NSLocalizedString("Map every chamber below.", comment: "")
+        case .status:   return NSLocalizedString("Every pulse of the den.", comment: "")
         }
     }
 }

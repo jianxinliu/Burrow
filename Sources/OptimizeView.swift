@@ -18,8 +18,14 @@ struct OptimizeView: View {
     var body: some View {
         if runner.phase == .idle {
             ToolHero(tool: .optimize, title: "Optimize", subtitle: Tool.optimize.tagline) {
-                PillButton(title: "Optimize") { preview = false; runner.run(["optimize"], elevated: true, label: "Optimizing") }
-                PillButton(title: "Preview", filled: false) { preview = true; runner.run(["optimize", "--dry-run"], label: "Optimize preview") }
+                PillButton(title: "Optimize") {
+                    preview = false
+                    runner.run(["optimize"], elevated: true, label: NSLocalizedString("Optimizing", comment: ""))
+                }
+                PillButton(title: "Preview", filled: false) {
+                    preview = true
+                    runner.run(["optimize", "--dry-run"], label: NSLocalizedString("Optimize preview", comment: ""))
+                }
             }
         } else {
             let report = parseTaskReport(runner.lines)
@@ -28,7 +34,7 @@ struct OptimizeView: View {
                 Rectangle().fill(Brand.hairline).frame(height: 1)
                 if isDone, !preview {
                     DoneBanner(accent: Tool.optimize.accent, title: "Maintenance complete",
-                               detail: "\(report.groups.count) areas refreshed")
+                               detail: String(format: NSLocalizedString("%d areas refreshed", comment: ""), report.groups.count))
                 }
                 TaskReportView(groups: report.groups, accent: Tool.optimize.accent)
             }
@@ -41,7 +47,10 @@ struct OptimizeView: View {
             Text(statusText).font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
             Spacer()
             if isDone {
-                Button { preview = false; runner.run(["optimize"], elevated: true, label: "Optimizing") } label: {
+                Button {
+                    preview = false
+                    runner.run(["optimize"], elevated: true, label: NSLocalizedString("Optimizing", comment: ""))
+                } label: {
                     Label("Run again", systemImage: "arrow.clockwise")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
                 }.buttonStyle(.plain)
@@ -53,9 +62,9 @@ struct OptimizeView: View {
 
     private var statusText: String {
         switch runner.phase {
-        case .running: return preview ? "Previewing maintenance…" : "Running maintenance…"
-        case .done:    return preview ? "Preview complete." : "Maintenance complete."
-        case .failed(let m): return "Failed: \(m)"
+        case .running: return preview ? NSLocalizedString("Previewing maintenance…", comment: "") : NSLocalizedString("Running maintenance…", comment: "")
+        case .done:    return preview ? NSLocalizedString("Preview complete.", comment: "") : NSLocalizedString("Maintenance complete.", comment: "")
+        case .failed(let m): return String(format: NSLocalizedString("Failed: %@", comment: ""), m)
         case .idle:    return ""
         }
     }

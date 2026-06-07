@@ -29,6 +29,7 @@ enum TaskMarker {
         case "✓", "✔":      self = .ok
         case "•", "◎", "●": self = .review
         case "✗", "✘", "✕": self = .error
+        case "ℹ", "☞":      self = .info
         default:            self = .info
         }
     }
@@ -52,10 +53,99 @@ struct TaskSummary {
     let categories: String // "20"
 }
 
+enum TaskReportText {
+    static func title(_ raw: String, bundle: Bundle = .main) -> String {
+        localized(raw, bundle: bundle)
+    }
+
+    static func item(_ raw: String, bundle: Bundle = .main) -> String {
+        dynamicItem(raw, bundle: bundle) ?? localized(raw, bundle: bundle)
+    }
+
+    static func line(_ raw: String, bundle: Bundle = .main) -> String {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        guard let first = t.first else { return raw }
+        if first == "➤" {
+            return title(String(t.dropFirst()).trimmingCharacters(in: .whitespaces), bundle: bundle)
+        }
+        let markerChars: Set<Character> = ["→", "➜", "✓", "✔", "•", "◎", "●", "✗", "✘", "✕", "ℹ", "☞"]
+        if markerChars.contains(first) {
+            return item(String(t.dropFirst()).trimmingCharacters(in: .whitespaces), bundle: bundle)
+        }
+        return localized(t, bundle: bundle)
+    }
+
+    private static func localized(_ key: String, bundle: Bundle) -> String {
+        bundle.localizedString(forKey: key, value: key, table: nil)
+    }
+
+    private static func dynamicItem(_ raw: String, bundle: Bundle) -> String? {
+        if let checked = between(raw, prefix: "Login items all healthy (", suffix: " checked)") {
+            return String(format: localized("Login items all healthy (%@ checked)", bundle: bundle), checked)
+        }
+        if let size = between(raw, prefix: "Knowledge database is healthy (", suffix: ")") {
+            return String(format: localized("Knowledge database is healthy (%@)", bundle: bundle), size)
+        }
+        if let bottleneck = raw.stripPrefix("Likely bottleneck: ") {
+            return String(format: localized("Likely bottleneck: %@", bundle: bundle), bottleneck)
+        }
+        if let dry = dryRunItem(raw, bundle: bundle) {
+            return dry
+        }
+        return nil
+    }
+
+    private static func between(_ raw: String, prefix: String, suffix: String) -> String? {
+        guard raw.hasPrefix(prefix), raw.hasSuffix(suffix) else { return nil }
+        return String(raw.dropFirst(prefix.count).dropLast(suffix.count))
+    }
+
+    private static func dryRunItem(_ raw: String, bundle: Bundle) -> String? {
+        if raw.hasSuffix(" dry"),
+           let comma = raw.range(of: ", ", options: .backwards),
+           let oldItems = raw.range(of: " old items", options: .backwards, range: raw.startIndex..<comma.lowerBound) {
+            let nameAndCount = String(raw[..<oldItems.lowerBound])
+            let size = String(raw[comma.upperBound...].dropLast(" dry".count))
+            if let space = nameAndCount.range(of: " ", options: .backwards) {
+                let name = String(nameAndCount[..<space.lowerBound]).trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                let count = String(nameAndCount[space.upperBound...])
+                return String(format: localized("%@ %@ old items, %@ dry", bundle: bundle),
+                              localized(name, bundle: bundle), count, size)
+            }
+        }
+        if raw.hasSuffix(" dry"),
+           let comma = raw.range(of: ", ", options: .backwards),
+           let items = raw.range(of: " items", options: .backwards, range: raw.startIndex..<comma.lowerBound) {
+            let nameAndCount = String(raw[..<items.lowerBound])
+            let size = String(raw[comma.upperBound...].dropLast(" dry".count))
+            if let space = nameAndCount.range(of: " ", options: .backwards) {
+                let name = String(nameAndCount[..<space.lowerBound]).trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                let count = String(nameAndCount[space.upperBound...])
+                return String(format: localized("%@ %@ items, %@ dry", bundle: bundle),
+                              localized(name, bundle: bundle), count, size)
+            }
+        }
+        if raw.hasSuffix(" dry"),
+           let comma = raw.range(of: ", ", options: .backwards) {
+            let name = String(raw[..<comma.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let size = String(raw[comma.upperBound...].dropLast(" dry".count))
+            return String(format: localized("%@, %@ dry", bundle: bundle),
+                          localized(name, bundle: bundle), size)
+        }
+        return nil
+    }
+}
+
+private extension String {
+    func stripPrefix(_ prefix: String) -> String? {
+        hasPrefix(prefix) ? String(dropFirst(prefix.count)) : nil
+    }
+}
+
 func parseTaskReport(_ lines: [String]) -> (groups: [TaskGroup], summary: TaskSummary?) {
     var groups: [TaskGroup] = []
     var summary: TaskSummary?
-    let markerChars: Set<Character> = ["→", "➜", "✓", "✔", "•", "◎", "●", "✗", "✘", "✕"]
+    let markerChars: Set<Character> = ["→", "➜", "✓", "✔", "•", "◎", "●", "✗", "✘", "✕", "ℹ", "☞"]
 
     for raw in lines {
         let t = raw.trimmingCharacters(in: .whitespaces)
@@ -200,7 +290,7 @@ final class CommandRunner: ObservableObject {
         buffer = parts.removeLast()
         lines.append(contentsOf: parts)
         if operationLabel != nil, let last = parts.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
-            OperationCenter.shared.detail(opId, last)
+            OperationCenter.shared.detail(opId, TaskReportText.line(last))
         }
     }
     private func flush() { if !buffer.isEmpty { lines.append(buffer); buffer = "" } }
@@ -238,13 +328,13 @@ struct TaskReportView: View {
                     ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                         GlassCard {
                             VStack(alignment: .leading, spacing: 7) {
-                                Text(group.title.uppercased())
+                                Text(TaskReportText.title(group.title).uppercased())
                                     .font(Brand.mono(10, .bold)).tracking(0.7)
                                     .foregroundStyle(accent)
                                 ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
                                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                                         marker(item.marker)
-                                        Text(item.text)
+                                        Text(TaskReportText.item(item.text))
                                             .font(Brand.sans(12))
                                             .foregroundStyle(textColor(item.marker))
                                             .fixedSize(horizontal: false, vertical: true)
@@ -309,7 +399,7 @@ struct PillButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(title)
+            Text(NSLocalizedString(title, comment: ""))
                 .font(Brand.sans(13, .semibold))
                 .foregroundStyle(filled ? Color.black : Brand.textPrimary)
                 .padding(.horizontal, 22).padding(.vertical, 10)
@@ -330,8 +420,8 @@ struct ToolHero<Buttons: View>: View {
             Spacer()
             HeroOrb(accent: tool.accent)
             VStack(spacing: 8) {
-                Text(title).font(Brand.serif(28, .medium)).foregroundStyle(Brand.textPrimary)
-                Text(subtitle).font(Brand.serif(15)).italic().foregroundStyle(Brand.textSecondary)
+                Text(NSLocalizedString(title, comment: "")).font(Brand.serif(28, .medium)).foregroundStyle(Brand.textPrimary)
+                Text(NSLocalizedString(subtitle, comment: "")).font(Brand.serif(15)).italic().foregroundStyle(Brand.textSecondary)
             }
             HStack(spacing: 12) { buttons() }.padding(.top, 4)
             Spacer(); Spacer()
@@ -353,7 +443,7 @@ struct DoneBanner: View {
                 Image(systemName: "checkmark").font(.system(size: 16, weight: .bold)).foregroundStyle(accent)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(Brand.sans(15, .semibold)).foregroundStyle(Brand.textPrimary)
+                Text(NSLocalizedString(title, comment: "")).font(Brand.sans(15, .semibold)).foregroundStyle(Brand.textPrimary)
                 if let d = detail { Text(d).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary) }
             }
             Spacer()

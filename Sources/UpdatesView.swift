@@ -64,7 +64,7 @@ struct UpdatesView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("\(model.items.count) update\(model.items.count == 1 ? "" : "s")")
+            Text(String(format: NSLocalizedString(model.items.count == 1 ? "%d update" : "%d updates", comment: ""), model.items.count))
                 .font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
             Spacer()
             Button { model.reload() } label: {
@@ -115,7 +115,10 @@ final class UpdatesModel: ObservableObject {
     func startIfNeeded() { if !started { started = true; reload() } }
 
     func reload() {
-        guard let brew = Self.brewPath() else { error = "Homebrew (`brew`) not found on this Mac."; return }
+        guard let brew = Self.brewPath() else {
+            error = NSLocalizedString("Homebrew (`brew`) not found on this Mac.", comment: "")
+            return
+        }
         loading = true; error = nil
         DispatchQueue.global(qos: .userInitiated).async {
             let r = Self.runBrew(brew, ["outdated", "--json=v2"])

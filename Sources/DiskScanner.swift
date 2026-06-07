@@ -54,11 +54,12 @@ enum DiskScanError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .moNotFound:
-            return "Mole CLI (`mo`) not found on PATH."
+            return NSLocalizedString("Mole CLI (`mo`) not found on PATH.", comment: "")
         case .moFailed(let code, let stderr):
-            return "mo analyze exited \(code): \(stderr.prefix(200))"
+            return String(format: NSLocalizedString("mo analyze exited %d: %@", comment: ""),
+                          code, String(stderr.prefix(200)))
         case .parseFailed(let m):
-            return "Couldn't parse mo analyze output: \(m)"
+            return String(format: NSLocalizedString("Couldn't parse mo analyze output: %@", comment: ""), m)
         }
     }
 }

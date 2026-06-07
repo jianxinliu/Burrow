@@ -133,7 +133,8 @@ struct PopupView: View {
 
     private func specLine(_ s: MoleStatus) -> String {
         let cpu = s.hardware.cpuModel.replacingOccurrences(of: "Apple ", with: "")
-        return "\(cpu) · \(s.hardware.totalRam) · up \(Fmt.uptime(s.uptimeSeconds))"
+        return String(format: NSLocalizedString("%@ · %@ · up %@", comment: ""),
+                      cpu, s.hardware.totalRam, Fmt.uptime(s.uptimeSeconds))
     }
 
     // MARK: Metric grid
@@ -165,7 +166,8 @@ struct PopupView: View {
     }
     private func netFoot(_ s: MoleStatus) -> String {
         let n = s.network.first(where: { !$0.ip.isEmpty }) ?? s.network.first
-        return n.map { "↓ \(Int($0.rxRateMbs * 1024)) ↑ \(Int($0.txRateMbs * 1024)) KB/s" } ?? "—"
+        return n.map { String(format: NSLocalizedString("↓ %d ↑ %d KB/s", comment: ""),
+                              Int($0.rxRateMbs * 1024), Int($0.txRateMbs * 1024)) } ?? "—"
     }
     private func gpuValue(_ s: MoleStatus) -> (String, String) {
         let u = s.gpu?.first?.usage ?? -1
@@ -276,7 +278,7 @@ private struct DiskBatteryRows: View {
             if let disk = s.disks.first {
                 bar(eyebrow: "Disk", glyph: "internaldrive", accent: disk.usedPercent >= 90 ? Brand.red : Brand.blue,
                     value: Fmt.gb((Double(disk.total) - Double(disk.used)) / 1_073_741_824) + " GB",
-                    detail: String(format: "%.0f%% used", disk.usedPercent),
+                    detail: String(format: NSLocalizedString("%.0f%% used", comment: ""), disk.usedPercent),
                     fraction: disk.usedPercent / 100,
                     barColor: disk.usedPercent >= 90 ? Brand.red : Brand.blue)
             }
@@ -284,7 +286,9 @@ private struct DiskBatteryRows: View {
                 bar(eyebrow: "Battery", glyph: "battery.100",
                     accent: b.percent <= 20 ? Brand.red : Brand.green,
                     value: String(format: "%.0f%%", b.percent),
-                    detail: b.status == "charging" ? "charging" : "\(b.timeLeft) left",
+                    detail: b.status == "charging"
+                        ? NSLocalizedString("charging", comment: "")
+                        : String(format: NSLocalizedString("%@ left", comment: ""), b.timeLeft),
                     fraction: b.percent / 100,
                     barColor: b.percent <= 20 ? Brand.red : Brand.green)
             }
@@ -314,11 +318,11 @@ private struct DiskBatteryRows: View {
 enum HealthRating {
     static func label(_ score: Int) -> String {
         switch score {
-        case 90...:   return "Excellent"
-        case 75..<90: return "Good"
-        case 60..<75: return "Fair"
-        case 40..<60: return "Poor"
-        default:      return "Critical"
+        case 90...:   return NSLocalizedString("Excellent", comment: "")
+        case 75..<90: return NSLocalizedString("Good", comment: "")
+        case 60..<75: return NSLocalizedString("Fair", comment: "")
+        case 40..<60: return NSLocalizedString("Poor", comment: "")
+        default:      return NSLocalizedString("Critical", comment: "")
         }
     }
     static func color(_ score: Int) -> Color {
@@ -371,9 +375,9 @@ final class HUDModel: ObservableObject {
     private func refreshCurrent() {
         snap = sampler.lastSnapshot
         if let when = sampler.lastSampleAt {
-            freshness = "\(Int(Date().timeIntervalSince(when)))s ago"
+            freshness = String(format: NSLocalizedString("%ds ago", comment: ""), Int(Date().timeIntervalSince(when)))
         } else {
-            freshness = "no samples yet"
+            freshness = NSLocalizedString("no samples yet", comment: "")
         }
     }
 

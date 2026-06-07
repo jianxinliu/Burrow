@@ -57,17 +57,17 @@ enum MoleCLI {
     /// dependency model.
     static func showMissingAlert() {
         let alert = NSAlert()
-        alert.messageText = "Mole CLI not found"
-        alert.informativeText = """
+        alert.messageText = NSLocalizedString("Mole CLI not found", comment: "")
+        alert.informativeText = NSLocalizedString("""
             Burrow uses the Mole CLI (`mo`) for system metrics and cleanup. \
             Install it with:
 
                 brew install mole
 
             Then relaunch Burrow.
-            """
+            """, comment: "")
         alert.alertStyle = .critical
-        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: NSLocalizedString("Quit", comment: ""))
         _ = alert.runModal()
     }
 

@@ -84,20 +84,20 @@ struct SettingsView: View {
 
     private func infoRow(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label).font(Brand.sans(12)).foregroundStyle(Brand.textSecondary)
+            Text(NSLocalizedString(label, comment: "")).font(Brand.sans(12)).foregroundStyle(Brand.textSecondary)
             Spacer()
             Text(value).font(Brand.mono(11)).foregroundStyle(Brand.textPrimary)
         }
     }
 
     private func footnote(_ text: String) -> some View {
-        Text(text).font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
+        Text(NSLocalizedString(text, comment: "")).font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func toggleRow(_ label: String, isOn: Binding<Bool>, onChange: @escaping (Bool) -> Void) -> some View {
         Toggle(isOn: isOn) {
-            Text(label).font(Brand.sans(12)).foregroundStyle(Brand.textPrimary)
+            Text(NSLocalizedString(label, comment: "")).font(Brand.sans(12)).foregroundStyle(Brand.textPrimary)
         }
         .toggleStyle(.switch)
         .tint(Brand.green)
@@ -107,10 +107,10 @@ struct SettingsView: View {
     private func pickerRow(_ label: String, selection: Binding<Int>,
                            options: [(Int, String)], onChange: @escaping (Int) -> Void) -> some View {
         HStack {
-            Text(label).font(Brand.sans(12)).foregroundStyle(Brand.textPrimary)
+            Text(NSLocalizedString(label, comment: "")).font(Brand.sans(12)).foregroundStyle(Brand.textPrimary)
             Spacer()
             Picker("", selection: selection) {
-                ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+                ForEach(options, id: \.0) { Text(NSLocalizedString($0.1, comment: "")).tag($0.0) }
             }
             .labelsHidden()
             .pickerStyle(.menu)
@@ -139,9 +139,10 @@ struct SettingsView: View {
 
         if let last = AppDelegate.shared?.maintenance?.lastRunAt {
             let delta = Int(Date().timeIntervalSince(last))
-            self.lastMaintenanceText = "\(delta)s ago · pruned \(AppDelegate.shared?.maintenance?.lastPruneDeleted ?? 0) rows"
+            self.lastMaintenanceText = String(format: NSLocalizedString("%ds ago · pruned %d rows", comment: ""),
+                                              delta, AppDelegate.shared?.maintenance?.lastPruneDeleted ?? 0)
         } else {
-            self.lastMaintenanceText = "not yet run"
+            self.lastMaintenanceText = NSLocalizedString("not yet run", comment: "")
         }
     }
 }

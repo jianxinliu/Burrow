@@ -31,7 +31,10 @@ struct CleanView: View {
                 Rectangle().fill(Brand.hairline).frame(height: 1)
                 if isDone, mode == .real {
                     DoneBanner(accent: Tool.clean.accent, title: "Cleaned",
-                               detail: report.summary.map { "Freed up to \($0.space) · \($0.items) items" })
+                               detail: report.summary.map {
+                                   String(format: NSLocalizedString("Freed up to %@ · %@ items", comment: ""),
+                                          $0.space, $0.items)
+                               })
                 } else if mode == .dry, let s = report.summary {
                     summaryBanner(s)
                 }
@@ -63,7 +66,8 @@ struct CleanView: View {
                 .font(Brand.mono(24, .semibold)).foregroundStyle(Tool.clean.accent)
             Text("to free").font(Brand.sans(13)).foregroundStyle(Brand.textSecondary)
             if !s.items.isEmpty {
-                Text("· \(s.items) items · \(s.categories) categories")
+                Text(String(format: NSLocalizedString("· %@ items · %@ categories", comment: ""),
+                            s.items, s.categories))
                     .font(Brand.mono(11)).foregroundStyle(Brand.textTertiary)
             }
             Spacer()
@@ -76,24 +80,27 @@ struct CleanView: View {
 
     private var statusText: String {
         switch runner.phase {
-        case .running: return mode == .dry ? "Scanning your Mac…" : "Cleaning… don't quit."
-        case .done:    return mode == .dry ? "Preview — review, then clean for real." : "Done — caches cleared."
-        case .failed(let m): return "Failed: \(m)"
+        case .running: return mode == .dry ? NSLocalizedString("Scanning your Mac…", comment: "") : NSLocalizedString("Cleaning… don't quit.", comment: "")
+        case .done:    return mode == .dry ? NSLocalizedString("Preview — review, then clean for real.", comment: "") : NSLocalizedString("Done — caches cleared.", comment: "")
+        case .failed(let m): return String(format: NSLocalizedString("Failed: %@", comment: ""), m)
         case .idle:    return ""
         }
     }
 
-    private func startDry() { mode = .dry; runner.run(["clean", "--dry-run"], label: "Scanning caches") }
+    private func startDry() {
+        mode = .dry
+        runner.run(["clean", "--dry-run"], label: NSLocalizedString("Scanning caches", comment: ""))
+    }
 
     private func confirmReal() {
         let alert = NSAlert()
-        alert.messageText = "Clean caches for real?"
-        alert.informativeText = "Burrow will run `mo clean` with administrator rights. Cache files are removed permanently; Mole's whitelist and safety rules still apply."
+        alert.messageText = NSLocalizedString("Clean caches for real?", comment: "")
+        alert.informativeText = NSLocalizedString("Burrow will run `mo clean` with administrator rights. Cache files are removed permanently; Mole's whitelist and safety rules still apply.", comment: "")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Clean")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: NSLocalizedString("Clean", comment: ""))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         mode = .real
-        runner.run(["clean"], elevated: true, label: "Cleaning caches")
+        runner.run(["clean"], elevated: true, label: NSLocalizedString("Cleaning caches", comment: ""))
     }
 }

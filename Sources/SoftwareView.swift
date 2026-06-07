@@ -28,7 +28,10 @@ struct InstalledApp: Identifiable {
     let lastUsed: Date?
 }
 
-enum AppSort: String, CaseIterable { case size = "Size", name = "Name", recent = "Recent", source = "Source" }
+enum AppSort: String, CaseIterable {
+    case size = "Size", name = "Name", recent = "Recent", source = "Source"
+    var label: String { NSLocalizedString(rawValue, comment: "") }
+}
 enum SoftwareSegment { case uninstall, updates }
 
 struct SoftwareView: View {
@@ -57,7 +60,7 @@ struct SoftwareView: View {
             if model.segment == .uninstall {
                 ForEach(AppSort.allCases, id: \.self) { s in
                     Button { model.setSort(s) } label: {
-                        Text(s.rawValue.lowercased())
+                        Text(s.label.lowercased())
                             .font(Brand.mono(11, model.sort == s ? .semibold : .regular))
                             .foregroundStyle(model.sort == s ? Tool.apps.accent : Brand.textSecondary)
                     }.buttonStyle(.plain)
@@ -80,7 +83,7 @@ struct SoftwareView: View {
     private func seg(_ title: String, _ value: SoftwareSegment) -> some View {
         let on = model.segment == value
         return Button { model.segment = value } label: {
-            Text(title).font(Brand.mono(11, on ? .semibold : .regular))
+            Text(NSLocalizedString(title, comment: "")).font(Brand.mono(11, on ? .semibold : .regular))
                 .foregroundStyle(on ? .black : Brand.textSecondary)
                 .padding(.horizontal, 12).padding(.vertical, 5)
                 .background { if on { Capsule().fill(.white) } }
@@ -129,7 +132,7 @@ struct SoftwareView: View {
             Button {
                 model.confirmAndUninstall()
             } label: {
-                Text("Uninstall\(model.selected.isEmpty ? "" : " (\(model.selected.count))")")
+                Text(model.uninstallButtonTitle)
                     .font(Brand.sans(12, .semibold))
                     .foregroundStyle(model.selected.isEmpty ? Brand.textTertiary : .white)
                     .padding(.horizontal, 14).padding(.vertical, 6)
@@ -205,9 +208,17 @@ final class SoftwareModel: ObservableObject {
     }
 
     var selectionLabel: String {
-        if selected.isEmpty { return "\(apps.count) apps" }
+        if selected.isEmpty {
+            return String(format: NSLocalizedString("%d apps", comment: ""), apps.count)
+        }
         let total = apps.filter { selected.contains($0.id) }.reduce(Int64(0)) { $0 + $1.sizeBytes }
-        return "\(selected.count) selected · \(Fmt.bytes(total))"
+        return String(format: NSLocalizedString("%d selected · %@", comment: ""), selected.count, Fmt.bytes(total))
+    }
+
+    var uninstallButtonTitle: String {
+        selected.isEmpty
+            ? NSLocalizedString("Uninstall", comment: "")
+            : String(format: NSLocalizedString("Uninstall (%d)", comment: ""), selected.count)
     }
 
     func startIfNeeded() {
@@ -292,12 +303,12 @@ final class SoftwareModel: ObservableObject {
         let targets = apps.filter { selected.contains($0.id) }
         guard !targets.isEmpty else { return }
         let alert = NSAlert()
-        alert.messageText = "Uninstall \(targets.count) app\(targets.count == 1 ? "" : "s")?"
-        alert.informativeText = "These move to the Trash (recoverable):\n\n"
-            + targets.map { "• \($0.name)" }.joined(separator: "\n")
+        alert.messageText = String(format: NSLocalizedString(targets.count == 1 ? "Uninstall %d app?" : "Uninstall %d apps?", comment: ""), targets.count)
+        alert.informativeText = String(format: NSLocalizedString("These move to the Trash (recoverable):\n\n%@", comment: ""),
+                                       targets.map { "• \($0.name)" }.joined(separator: "\n"))
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: NSLocalizedString("Move to Trash", comment: ""))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let names = targets.map { $0.uninstallName }

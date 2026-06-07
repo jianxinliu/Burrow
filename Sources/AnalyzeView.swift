@@ -217,15 +217,15 @@ final class AnalyzeModel: ObservableObject {
     private let opId = UUID()
 
     var summaryLine: String {
-        entries.isEmpty ? "—" : "\(entries.count) items · \(Fmt.bytes(total))"
+        entries.isEmpty ? "—" : String(format: NSLocalizedString("%d items · %@", comment: ""), entries.count, Fmt.bytes(total))
     }
-    var usageLine: String { "\(Fmt.bytes(total)) in \(entries.count) items" }
+    var usageLine: String { String(format: NSLocalizedString("%@ in %d items", comment: ""), Fmt.bytes(total), entries.count) }
 
     func startIfNeeded() {
         guard !started else { return }
         started = true
         crumbs = []
-        scan(NSHomeDirectory(), name: "Home", push: true)
+        scan(NSHomeDirectory(), name: NSLocalizedString("Home", comment: ""), push: true)
     }
 
     func drill(into e: DiskScanEntry) {
@@ -249,7 +249,7 @@ final class AnalyzeModel: ObservableObject {
         loading = true
         error = nil
         if push { crumbs.append((name, path)) }
-        OperationCenter.shared.begin(opId, label: "Analyzing \(name)")
+        OperationCenter.shared.begin(opId, label: String(format: NSLocalizedString("Analyzing %@", comment: ""), name))
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let r = try DiskScanner.scan(path)
@@ -258,13 +258,14 @@ final class AnalyzeModel: ObservableObject {
                     self.entries = r.entries
                     self.total = sum
                     self.loading = false
-                    OperationCenter.shared.end(self.opId, success: true, detail: "\(r.entries.count) items · \(Fmt.bytes(sum))")
+                    OperationCenter.shared.end(self.opId, success: true,
+                                               detail: String(format: NSLocalizedString("%d items · %@", comment: ""), r.entries.count, Fmt.bytes(sum)))
                 }
             } catch {
                 Task { @MainActor in
                     self.error = error.localizedDescription
                     self.loading = false
-                    OperationCenter.shared.end(self.opId, success: false, detail: "scan failed")
+                    OperationCenter.shared.end(self.opId, success: false, detail: NSLocalizedString("scan failed", comment: ""))
                 }
             }
         }
