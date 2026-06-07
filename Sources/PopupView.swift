@@ -32,6 +32,7 @@ struct PopupView: View {
         // the box and the arrow, so they match.
         VStack(alignment: .leading, spacing: 9) {
             header
+            if ops.hasActivity { activitySection }   // running jobs up top, where they're seen
             if let s = model.snap {
                 healthHero(s)
                 metricGrid(s)
@@ -40,7 +41,6 @@ struct PopupView: View {
             } else {
                 waiting
             }
-            if ops.hasActivity { activitySection }
             Rectangle().fill(Brand.hairline).frame(height: 1)
             footer
         }
@@ -267,16 +267,22 @@ struct PopupView: View {
 
     private var footer: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 5) {
+            // Icon pills — text labels for every tool overflow the narrow
+            // popover; glyphs (tinted by tool) stay compact and tidy.
+            HStack(spacing: 6) {
                 ForEach(Tool.navOrder) { tool in
                     Button { open(.tool(tool)) } label: {
-                        Text(tool.label).font(Brand.mono(9, .medium))
-                            .foregroundStyle(Brand.textSecondary)
-                            .padding(.horizontal, 7).padding(.vertical, 4)
+                        Image(systemName: tool.glyph)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(tool.accent)
+                            .frame(width: 30, height: 26)
                             .background(Capsule().fill(Brand.chipFill))
-                    }.buttonStyle(.plain)
+                    }
+                    .buttonStyle(.plain)
+                    .help(tool.title)
                 }
             }
+            .frame(maxWidth: .infinity)
             HStack(spacing: 12) {
                 iconButton("clock.arrow.circlepath") { openHistory() }
                 iconButton("gearshape") { openSettings() }
@@ -286,7 +292,10 @@ struct PopupView: View {
                     .font(Brand.sans(11, .semibold)).foregroundStyle(Brand.textPrimary)
                 iconButton("power") { NSApp.terminate(nil) }
             }
-            Text("MCP 127.0.0.1:\(Store.queryServerPort)")
+            // `verbatim:` so the port isn't localized into "9,277".
+            Text(verbatim: Store.queryServerEnabled
+                 ? "MCP · 127.0.0.1:\(Store.queryServerPort) + stdio"
+                 : "MCP · stdio (burrow --mcp)")
                 .font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
