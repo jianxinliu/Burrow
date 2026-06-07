@@ -179,7 +179,11 @@ final class CommandRunner: ObservableObject {
         let safe = args.map { $0.filter(\.isLetter) }.joined(separator: "-")
         let logPath = NSTemporaryDirectory() + "burrow-op-\(safe).log"
         FileManager.default.createFile(atPath: logPath, contents: Data())
-        let inner = "\(mo) \(args.joined(separator: " ")) > '\(logPath)' 2>&1"
+        // Single-quote the executable path (args are hardcoded literals) so a
+        // space or metacharacter in the resolved `mo` path can't break or
+        // inject into the `do shell script` command.
+        func shQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let inner = "\(shQuote(mo)) \(args.joined(separator: " ")) > \(shQuote(logPath)) 2>&1"
         let script = "do shell script \"\(inner)\" with administrator privileges"
 
         let t = Process()
