@@ -57,8 +57,7 @@ struct StreamingToolView: View {
 
     @StateObject private var runner = CommandRunner()
     @State private var mode: Mode = .dry
-    @State private var fdaRunAnyway = false
-    @State private var pendingRun: (() -> Void)? = nil
+    @State private var pendingRun: ((Bool) -> Void)? = nil
 
     enum Mode { case dry, real }
 
@@ -67,8 +66,8 @@ struct StreamingToolView: View {
             if pendingRun != nil {
                 FullDiskAccessRequired(
                     accent: action.tool.accent,
-                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending() } },
-                    onRunAnyway: { fdaRunAnyway = true; runPending() },
+                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending(elevate: false) } },
+                    onRunAnyway: { runPending(elevate: true) },
                     onCancel: { pendingRun = nil })
             } else {
                 ToolHero(tool: action.tool, title: action.tool.title, subtitle: action.tool.tagline) {
@@ -151,20 +150,24 @@ struct StreamingToolView: View {
 
     // MARK: - Full Disk Access gate
 
-    /// Divert flood-prone scans to the FDA gate before the macOS per-folder
-    /// prompts can pile up; run directly once access is granted (or waived).
-    private func guarded(_ work: @escaping () -> Void) {
-        if !fdaRunAnyway && !Privacy.hasFullDiskAccess() { pendingRun = work }
-        else { work() }
+    /// With Full Disk Access, run directly. Without, divert to the gate; the
+    /// user grants FDA (then we run normally) or picks "Scan with admin",
+    /// which runs the same command elevated — root bypasses TCC, so one
+    /// password replaces the per-folder flood. `work(elevate)` decides.
+    private func guarded(_ work: @escaping (Bool) -> Void) {
+        if Privacy.hasFullDiskAccess() { work(false) } else { pendingRun = work }
     }
-    private func runPending() { let r = pendingRun; pendingRun = nil; r?() }
+    private func runPending(elevate: Bool) { let r = pendingRun; pendingRun = nil; r?(elevate) }
 
     private func startDry() {
-        guarded { mode = .dry; runner.run([action.subcommand, "--dry-run"], label: action.previewLabel) }
+        guarded { elevate in
+            mode = .dry
+            runner.run([action.subcommand, "--dry-run"], elevated: elevate, label: action.previewLabel)
+        }
     }
 
     private func confirmReal() {
-        guarded {
+        guarded { elevate in
             let alert = NSAlert()
             alert.messageText = action.confirmTitle
             alert.informativeText = action.confirmBody
@@ -173,7 +176,7 @@ struct StreamingToolView: View {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             mode = .real
-            runner.run([action.subcommand], elevated: action.elevated, label: action.runLabel)
+            runner.run([action.subcommand], elevated: elevate || action.elevated, label: action.runLabel)
         }
     }
 }
