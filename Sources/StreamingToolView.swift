@@ -76,17 +76,16 @@ struct StreamingToolView: View {
                 }
             }
         } else {
-            let report = parseTaskReport(runner.lines)
             VStack(spacing: 0) {
                 statusBar.padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 12)
                 Rectangle().fill(Brand.hairline).frame(height: 1)
                 if isDone, mode == .real {
                     DoneBanner(accent: action.tool.accent, title: action.doneTitle,
-                               detail: report.summary.map(doneDetail))
-                } else if mode == .dry, let s = report.summary {
+                               detail: runner.summary.map(doneDetail))
+                } else if mode == .dry, let s = runner.summary {
                     summaryBanner(s)
                 }
-                TaskReportView(groups: report.groups, accent: action.tool.accent)
+                TaskReportView(groups: runner.groups, accent: action.tool.accent)
             }
         }
     }
@@ -103,13 +102,10 @@ struct StreamingToolView: View {
                 }.buttonStyle(.plain)
             }
             if isDone {
-                Button { startDry() } label: {
-                    Label("Re-scan", systemImage: "arrow.clockwise")
+                Button { runner.reset() } label: {
+                    Label("Back", systemImage: "chevron.left")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
                 }.buttonStyle(.plain)
-            }
-            if mode == .dry, isDone {
-                PillButton(title: action.confirmCTA) { confirmReal() }
             }
         }
     }
