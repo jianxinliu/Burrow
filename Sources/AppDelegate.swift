@@ -206,7 +206,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             statusBar = nil   // StatusBarController.deinit removes the item
             if #available(macOS 14, *) {
                 NSApp.setActivationPolicy(.regular)
-                if mainWC?.window == nil { openMainWindow(initial: .tool(.status)) }
+                // mainWC is retained (isReleasedWhenClosed = false), so its
+                // window is non-nil even when closed — check visibility, not nil,
+                // so hiding the menu bar always leaves a visible window.
+                if mainWC?.window?.isVisible != true { openMainWindow(initial: .tool(.status)) }
             }
         }
     }
