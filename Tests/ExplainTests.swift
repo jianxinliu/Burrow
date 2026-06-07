@@ -104,7 +104,7 @@ final class ExplainTests: XCTestCase {
         do {
             _ = try await engine.explain(db: db)
             XCTFail("expected noData")
-        } catch let ExplainError.noData {
+        } catch ExplainError.noData {
             // expected
         } catch {
             XCTFail("expected .noData, got \(error)")

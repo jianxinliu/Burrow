@@ -27,7 +27,7 @@ import Foundation
 
 /// The compact, privacy-conscious set of facts we hand the model. Built
 /// from the latest snapshot only — no raw history, no file contents.
-struct ExplainContext: Equatable {
+struct ExplainContext {
     let healthScore: Int
     let healthMsg: String
     let cpuUsage: Double
@@ -37,12 +37,9 @@ struct ExplainContext: Equatable {
     let topProcesses: [(name: String, cpu: Double, mem: Double)]
     let ageSeconds: Int
 
-    static func == (l: ExplainContext, r: ExplainContext) -> Bool {
-        l.healthScore == r.healthScore && l.cpuUsage == r.cpuUsage
-            && l.memUsedPercent == r.memUsedPercent && l.memPressure == r.memPressure
-            && l.diskUsedPercent == r.diskUsedPercent
-            && l.topProcesses.map(\.name) == r.topProcesses.map(\.name)
-    }
+    // (No Equatable: the tuple-array property can't synthesize it, and a
+    // hand-written one that ignored fields would be a misleading footgun.
+    // Nothing compares contexts today.)
 
     /// Build from the most recent snapshot in the DB, or nil if none yet.
     static func build(db: DB) -> ExplainContext? {
@@ -184,6 +181,9 @@ struct OllamaProvider: ExplainProvider {
         var req = URLRequest(url: baseURL.appendingPathComponent("api/chat"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Bound the wait so the Explain sheet stays responsive even if
+        // localhost accepts the connection but the model never replies.
+        req.timeoutInterval = 30
         let body: [String: Any] = [
             "model": model,
             "stream": false,

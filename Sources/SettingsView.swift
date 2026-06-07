@@ -67,7 +67,9 @@ struct SettingsView: View {
                             TextField("llama3.2", text: $aiOllamaModel)
                                 .textFieldStyle(.plain).font(Brand.mono(11))
                                 .multilineTextAlignment(.trailing).frame(width: 130)
-                                .onSubmit { Store.aiOllamaModel = aiOllamaModel }
+                                // Persist on every edit, not just on Enter, so
+                                // closing Settings doesn't lose the change.
+                                .onChange(of: aiOllamaModel) { _, v in Store.aiOllamaModel = v }
                         }
                         footnote("Adds an \u{201C}Explain\u{201D} button to Status that reads your latest snapshot and explains it in plain English, optionally suggesting Clean/Purge/Installers. Runs against a local Ollama model by default — nothing leaves this Mac. Start it with `ollama run <model>`. (Cloud key support is coming.)")
                     }
