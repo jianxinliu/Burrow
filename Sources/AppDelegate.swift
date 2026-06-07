@@ -173,18 +173,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         // Retreat to a pure menu-bar agent only when the menu-bar icon is
-        // the entry point. With it disabled, keep the Dock icon so the app
-        // stays reachable after the window closes (issue #4).
-        if Store.showMenuBarIcon {
+        // the actual entry point — keyed off what we installed at launch,
+        // not the live Store value (which a mid-session toggle could change
+        // before a relaunch, stranding the app). With no status item, keep
+        // the Dock icon so the app stays reachable (issue #4).
+        if statusBar != nil {
             NSApp.setActivationPolicy(.accessory)
         }
     }
 
     /// Clicking the Dock icon (menu-bar-disabled mode) reopens the window.
+    /// When windows are already visible we return false so AppKit performs
+    /// its default raise-windows behaviour rather than us suppressing it.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows, #available(macOS 14, *) {
-            self.openMainWindow(initial: .tool(.status))
-        }
+        guard !hasVisibleWindows else { return false }
+        if #available(macOS 14, *) { self.openMainWindow(initial: .tool(.status)) }
         return true
     }
 
