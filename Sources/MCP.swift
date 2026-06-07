@@ -358,7 +358,11 @@ struct ToolCatalog {
     /// used so "this week" can't be silently reinterpreted.
     private func callProcessUsage(_ args: [String: Any]) throws -> String {
         let minutes = (args["minutes"] as? Int) ?? 60
-        guard minutes > 0 else { throw MCPToolError.badArguments("minutes must be positive") }
+        // Upper bound guards against Int overflow in `minutes * 60` below
+        // (~1.9 years is far past any useful window).
+        guard minutes > 0, minutes <= 1_000_000 else {
+            throw MCPToolError.badArguments("minutes must be between 1 and 1000000")
+        }
         let limit = max(1, min((args["limit"] as? Int) ?? 10, 100))
         let metric = (args["metric"] as? String) ?? "cpu_time"
         let allowed = ["cpu_time", "peak_cpu", "avg_cpu", "peak_mem"]
@@ -370,7 +374,13 @@ struct ToolCatalog {
         let since = now - minutes * 60
         let rows = self.db.findRangeSampled(prefix: Sampler.snapshotPrefix,
                                             since: since, until: now, maxPoints: 720)
-        let interval = Double(Store.sampleIntervalSeconds)
+        // findRangeSampled down-samples wide windows, so each returned row
+        // stands for MORE than one sample period. Estimate CPU-time against
+        // the effective spacing of the rows we actually got — using the raw
+        // sampler cadence would badly under-count over long windows.
+        let interval: Double = rows.count > 1
+            ? Double(max(1, rows[rows.count - 1].ts - rows[0].ts)) / Double(rows.count - 1)
+            : Double(Store.sampleIntervalSeconds)
 
         struct Agg { var peakCPU = 0.0; var sumCPU = 0.0; var samples = 0; var peakMem = 0.0 }
         var agg: [String: Agg] = [:]
@@ -408,7 +418,7 @@ struct ToolCatalog {
         }
         let startTS = rows.first?.ts ?? since
         let endTS = rows.last?.ts ?? now
-        return "{\"metric\":\"\(metric)\",\"window_minutes\":\(minutes),\"start_ts\":\(startTS),\"end_ts\":\(endTS),\"sample_count\":\(rows.count),\"interval_seconds\":\(Store.sampleIntervalSeconds),\"processes\":[\(pieces.joined(separator: ","))]}"
+        return "{\"metric\":\"\(metric)\",\"window_minutes\":\(minutes),\"start_ts\":\(startTS),\"end_ts\":\(endTS),\"sample_count\":\(rows.count),\"interval_seconds\":\(Int(interval.rounded())),\"processes\":[\(pieces.joined(separator: ","))]}"
     }
 
     private func callInfo() -> String {
