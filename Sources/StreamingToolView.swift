@@ -57,14 +57,24 @@ struct StreamingToolView: View {
 
     @StateObject private var runner = CommandRunner()
     @State private var mode: Mode = .dry
+    @State private var fdaRunAnyway = false
+    @State private var pendingRun: (() -> Void)? = nil
 
     enum Mode { case dry, real }
 
     var body: some View {
         if runner.phase == .idle {
-            ToolHero(tool: action.tool, title: action.tool.title, subtitle: action.tool.tagline) {
-                PillButton(title: action.runButton) { confirmReal() }
-                PillButton(title: "Preview", filled: false) { startDry() }
+            if pendingRun != nil {
+                FullDiskAccessRequired(
+                    accent: action.tool.accent,
+                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending() } },
+                    onRunAnyway: { fdaRunAnyway = true; runPending() },
+                    onCancel: { pendingRun = nil })
+            } else {
+                ToolHero(tool: action.tool, title: action.tool.title, subtitle: action.tool.tagline) {
+                    PillButton(title: action.runButton) { confirmReal() }
+                    PillButton(title: "Preview", filled: false) { startDry() }
+                }
             }
         } else {
             let report = parseTaskReport(runner.lines)
@@ -87,6 +97,12 @@ struct StreamingToolView: View {
             if isRunning { ProgressView().controlSize(.small).tint(action.tool.accent) }
             Text(statusText).font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
             Spacer()
+            if isRunning {
+                Button { runner.cancel() } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .font(Brand.mono(11)).foregroundStyle(Brand.red)
+                }.buttonStyle(.plain)
+            }
             if isDone {
                 Button { startDry() } label: {
                     Label("Re-scan", systemImage: "arrow.clockwise")
@@ -126,26 +142,38 @@ struct StreamingToolView: View {
     private var statusText: String {
         switch runner.phase {
         case .running: return mode == .dry ? "Scanning…" : "Working… don't quit."
-        case .done:    return mode == .dry ? "Preview — review, then run for real." : "Done."
+        case .done:    return runner.wasCancelled ? "Stopped."
+            : (mode == .dry ? "Preview — review, then run for real." : "Done.")
         case .failed(let m): return "Failed: \(m)"
         case .idle:    return ""
         }
     }
 
+    // MARK: - Full Disk Access gate
+
+    /// Divert flood-prone scans to the FDA gate before the macOS per-folder
+    /// prompts can pile up; run directly once access is granted (or waived).
+    private func guarded(_ work: @escaping () -> Void) {
+        if !fdaRunAnyway && !Privacy.hasFullDiskAccess() { pendingRun = work }
+        else { work() }
+    }
+    private func runPending() { let r = pendingRun; pendingRun = nil; r?() }
+
     private func startDry() {
-        mode = .dry
-        runner.run([action.subcommand, "--dry-run"], label: action.previewLabel)
+        guarded { mode = .dry; runner.run([action.subcommand, "--dry-run"], label: action.previewLabel) }
     }
 
     private func confirmReal() {
-        let alert = NSAlert()
-        alert.messageText = action.confirmTitle
-        alert.informativeText = action.confirmBody
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: action.confirmCTA)
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        mode = .real
-        runner.run([action.subcommand], elevated: action.elevated, label: action.runLabel)
+        guarded {
+            let alert = NSAlert()
+            alert.messageText = action.confirmTitle
+            alert.informativeText = action.confirmBody
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: action.confirmCTA)
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            mode = .real
+            runner.run([action.subcommand], elevated: action.elevated, label: action.runLabel)
+        }
     }
 }
