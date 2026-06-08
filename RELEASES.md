@@ -1,34 +1,34 @@
-# Burrow 0.5.5
+# Burrow 0.6.0
 
-A big feature release: two new cleanup tools, an AI "Explain" lens, and
-agent-driven cleanups over MCP.
+A fix-and-polish release: the Installers and Uninstall flows now actually
+complete, the system trackers show real data, and there's more to track.
 
-## New tools
-- **Purge** — find and remove old project build artifacts (`node_modules`,
-  `target/`, `build/`, …) via `mo purge`. Scan, then tick exactly which
-  artifacts to clear; Mole does the deletion.
-- **Installers** — find leftover installer files (`.dmg`, `.pkg`, `.iso`,
-  `.xip`, `.zip`) via `mo installer`, with the same pick-what-to-remove flow.
+## Cleanup flows that now work
+- **Installers** — the removal step used to time out at the confirm screen
+  ("didn't reach its confirm screen in time"). Mole renames its confirm verb
+  per tool ("Delete N installers" vs "Remove N artifact"); Burrow now reads
+  either, so installer cleanup completes.
+- **Uninstall** — selecting an app and pressing Uninstall did nothing: Mole's
+  `uninstall` waits for a `[y/N]` confirmation that a windowed app couldn't
+  answer, so it hung. Burrow now drives the full `mo uninstall` flow to
+  completion (still gated behind its own confirm sheet; files go to the Trash).
+- **Purge → Show all** — Mole only renders its ~50 biggest finds at a time.
+  A new **Show all N** button pulls in the complete list so you can pick from
+  everything it found, not just the largest, with the same verify-before-delete
+  safety.
 
-## Explain (AI) — experimental
-A small, opt-in lens on the Status tab that reads your latest snapshot and
-explains it in plain English, optionally suggesting one safe next step
-(Clean / Purge / Installers). It only ever reads one snapshot and never acts
-on its own.
-- **Local by default** — runs against a local **Ollama** model; nothing
-  leaves the Mac.
-- **LM Studio / OpenAI-compatible APIs** — switch the backend in Settings and
-  point it at LM Studio (load a model → Developer ▸ Start Server) or any
-  OpenAI-compatible endpoint. Local servers need no key.
+## Trackers that actually track
+- **Disk I/O** and **GPU usage** are now read natively (Mole reports them as
+  0 / unavailable on Apple Silicon), so the charts and tiles show real numbers.
+- **Thermal** now plots a temperature instead of "No samples".
+- New **Battery**, **GPU**, and **Fans** history charts.
+- **Top Processes** can rank by **CPU or RAM**.
+- Live metrics sample faster while you're watching them, so short network and
+  disk spikes land on the chart instead of being missed.
 
-## Agents can now *do*, not just read (MCP)
-The MCP server gains action tools so coding agents can drive Mole's commands:
-`burrow_clean`, `burrow_optimize`, `burrow_uninstall`, `burrow_analyze`,
-`burrow_list_apps`, plus `burrow_purge` / `burrow_installer` previews.
-**Safe by default:** every tool runs `--dry-run` unless the call passes
-`confirm:true` **and** you've enabled "Let agents run cleanups for real" in
-Settings. Without both, nothing is deleted. (Read-only metrics + cleanup
-history tools are unchanged.)
+## Other
+- Settings (menu-bar toggle, history retention, …) are flushed immediately so
+  a change made right before an update isn't lost.
 
 ## Install
 ```
