@@ -90,6 +90,32 @@ enum Store {
         set { d.set(newValue, forKey: "query_server_enabled") }
     }
 
+    /// Key for the destructive-MCP opt-in. Shared so the MCP process can
+    /// read it with a fresh, cross-process read (see `mcpActionsEnabled`).
+    static let mcpActionsEnabledKey = "mcp_actions_enabled"
+
+    /// Whether AI agents may run *destructive* cleanups (real `mo clean`,
+    /// `optimize`, `uninstall`) through the MCP server. OFF by default:
+    /// agents can always read metrics and run dry-run previews, but a real
+    /// deletion needs BOTH this switch AND an explicit `confirm:true` on the
+    /// tool call. The MCP server is a separate, possibly long-lived process,
+    /// so the getter reads straight from cfprefsd (not the cached
+    /// UserDefaults snapshot) to see a toggle the GUI just flipped.
+    static var mcpActionsEnabled: Bool {
+        get {
+            CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
+            if let v = CFPreferencesCopyAppValue(mcpActionsEnabledKey as CFString,
+                                                 kCFPreferencesCurrentApplication) as? Bool {
+                return v
+            }
+            return false
+        }
+        set {
+            d.set(newValue, forKey: mcpActionsEnabledKey)
+            d.synchronize()
+        }
+    }
+
     // MARK: - Privacy
 
     /// Whether the user has dismissed the Full Disk Access notice that

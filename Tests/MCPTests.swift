@@ -41,7 +41,10 @@ final class MCPTests: XCTestCase {
         let names = d.compactMap { $0["name"] as? String }
         XCTAssertEqual(Set(names),
                        ["burrow_snapshot", "burrow_history", "burrow_top_processes",
-                        "burrow_process_usage", "burrow_info"])
+                        "burrow_process_usage", "burrow_info",
+                        "burrow_analyze", "burrow_list_apps", "burrow_clean",
+                        "burrow_optimize", "burrow_uninstall", "burrow_purge",
+                        "burrow_installer"])
         // Every tool must carry an inputSchema and a description.
         for tool in d {
             XCTAssertNotNil(tool["description"] as? String)
@@ -149,6 +152,45 @@ final class MCPTests: XCTestCase {
         XCTAssertTrue(BurrowMain.isMCPInvocation(["burrow", "mcp"]))
         XCTAssertFalse(BurrowMain.isMCPInvocation(["Burrow"]))
         XCTAssertFalse(BurrowMain.isMCPInvocation(["Burrow", "status"]))
+    }
+
+    // MARK: - Action tools (the gate)
+
+    // The whole safety model: a real (deleting) run needs BOTH the per-call
+    // confirm AND the user's opt-in. Neither alone is enough.
+    func testRealActionAllowed_needsBothConfirmAndOptIn() {
+        XCTAssertTrue(ToolCatalog.realActionAllowed(confirm: true, optedIn: true))
+        XCTAssertFalse(ToolCatalog.realActionAllowed(confirm: true, optedIn: false))
+        XCTAssertFalse(ToolCatalog.realActionAllowed(confirm: false, optedIn: true))
+        XCTAssertFalse(ToolCatalog.realActionAllowed(confirm: false, optedIn: false))
+    }
+
+    // confirm:true with the Settings opt-in OFF must NOT run mo — it must
+    // short-circuit to a blocked result (no deletion attempted).
+    func testClean_confirmWithoutOptIn_isBlockedNotRun() throws {
+        let prior = Store.mcpActionsEnabled
+        Store.mcpActionsEnabled = false
+        defer { Store.mcpActionsEnabled = prior }
+
+        let json = try catalog.call(name: "burrow_clean", arguments: ["confirm": true])
+        let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        XCTAssertEqual(obj["blocked"] as? Bool, true)
+        XCTAssertEqual(obj["ran"] as? Bool, false)
+        XCTAssertNotNil(obj["reason"] as? String)
+    }
+
+    // uninstall is meaningless without a target — reject early, before mo.
+    func testUninstall_withoutApps_throwsBadArguments() {
+        XCTAssertThrowsError(try catalog.call(name: "burrow_uninstall", arguments: [:])) { err in
+            guard case MCPToolError.badArguments = err else {
+                return XCTFail("expected .badArguments, got \(err)")
+            }
+        }
+    }
+
+    func testStripANSI_removesColorCodes() {
+        let colored = "\u{1B}[1;35mMole Purge\u{1B}[0m done"
+        XCTAssertEqual(ToolCatalog.stripANSI(colored), "Mole Purge done")
     }
 
     func testCallUnknownTool_throwsUnknown() {

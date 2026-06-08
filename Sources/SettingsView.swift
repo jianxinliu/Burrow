@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var retentionDays: Int = Store.retentionDays
     @State private var autoVacuum: Bool = Store.autoVacuum
     @State private var queryServerEnabled: Bool = Store.queryServerEnabled
+    @State private var mcpActionsEnabled: Bool = Store.mcpActionsEnabled
     @State private var showMenuBarIcon: Bool = Store.showMenuBarIcon
     @State private var dbSizeText: String = "—"
     @State private var lastMaintenanceText: String = "—"
@@ -110,15 +111,20 @@ struct SettingsView: View {
 
                         codeBlock(mcpConfigJSON)
 
-                        infoRow("Tools", "burrow_snapshot · _history · _top_processes · _info")
+                        infoRow("Read tools", "snapshot · history · top_processes · process_usage · info · analyze")
+                        infoRow("Cleanup tools", "clean · optimize · uninstall · purge · installer")
 
                         subLabel("Try asking")
                         promptRow("What's my Mac's CPU and memory usage right now?")
-                        promptRow("Show the CPU trend over the last 2 hours.")
-                        promptRow("Which apps spiked CPU in the last 30 minutes?")
-                        promptRow("Is Burrow collecting data? When was the last sample?")
+                        promptRow("What's taking up space in my home folder?")
+                        promptRow("Preview what a cleanup would free, then clean it up.")
+                        promptRow("Uninstall Slack and remove its leftovers.")
 
-                        footnote("Config path is your agent's MCP settings (e.g. ~/.claude/settings.json). Read-only: agents can query history but never write or run cleanups. Data stays on this Mac.")
+                        Divider().padding(.vertical, 2)
+                        toggleRow("Let agents run cleanups for real", isOn: $mcpActionsEnabled) {
+                            Store.mcpActionsEnabled = $0
+                        }
+                        footnote("OFF by default. Agents can always read metrics and run dry-run previews. With this on, an agent can run a real `mo clean` / `optimize` / `uninstall` — but ONLY when it also passes an explicit confirm flag, so a deletion is never one stray sentence away. Turn it off and agents are read-only again. Data stays on this Mac.")
                     }
 
                     section("Menu bar", "menubar.rectangle") {
