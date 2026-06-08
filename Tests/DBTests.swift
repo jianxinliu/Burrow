@@ -28,6 +28,54 @@ final class DBTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
+    // MARK: - Corruption recovery (issue #5)
+
+    /// A corrupt / non-database file at the path must not brick launch.
+    /// `DB(at:)` recovers by quarantining the bad file and recreating a
+    /// fresh, usable store. Uses its own path so the setUp DB handle
+    /// isn't affected.
+    func testInit_recoversFromCorruptDatabaseFile() throws {
+        let url = tempDir.appendingPathComponent("corrupt.db")
+        try Data("this is not a sqlite database".utf8).write(to: url)
+
+        let recovered = try DB(at: url)   // must not throw
+        try recovered.insert(prefix: "p", ts: 1, json: "{\"v\":1}")
+        let row = try XCTUnwrap(recovered.findLatest(prefix: "p"))
+        XCTAssertEqual(row.json, "{\"v\":1}")
+    }
+
+    /// The error from the issue: a valid-but-non-writable file. The
+    /// non-destructive repair (restore write permission) must recover it
+    /// IN PLACE so the user's history survives — no quarantine.
+    func testInit_recoversFromReadonlyDatabaseFile() throws {
+        let url = tempDir.appendingPathComponent("ro.db")
+        var seed: DB? = try DB(at: url)
+        try seed!.insert(prefix: "p", ts: 5, json: "{\"seed\":true}")
+        seed = nil   // close + checkpoint WAL into the main file
+
+        try? FileManager.default.removeItem(atPath: url.path + "-wal")
+        try? FileManager.default.removeItem(atPath: url.path + "-shm")
+        try FileManager.default.setAttributes([.posixPermissions: 0o444],
+                                              ofItemAtPath: url.path)
+
+        let recovered = try DB(at: url)   // must not throw
+        let row = try XCTUnwrap(recovered.findLatest(prefix: "p"))
+        XCTAssertEqual(row.json, "{\"seed\":true}", "readonly recovery must preserve history")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path + ".corrupt"),
+                       "a writable-again file should be repaired in place, not quarantined")
+    }
+
+    /// A genuinely unusable file (not a database, can't be repaired) is
+    /// moved aside so the fresh db can take its place — and kept for
+    /// forensics rather than silently deleted.
+    func testInit_quarantinesUnrecoverableFile() throws {
+        let url = tempDir.appendingPathComponent("bad.db")
+        try Data("not a database".utf8).write(to: url)
+        _ = try DB(at: url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path + ".corrupt"),
+                      "the unusable file should be preserved alongside the fresh db")
+    }
+
     // MARK: - Roundtrip
 
     func testInsertAndFindLatest_returnsMostRecent() throws {

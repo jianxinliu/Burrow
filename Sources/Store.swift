@@ -58,6 +58,17 @@ enum Store {
         set { d.set(newValue, forKey: "auto_vacuum") }
     }
 
+    // MARK: - Menu bar
+
+    /// Whether to install the menu-bar status item (issue #4). On by
+    /// default. When off, Burrow has no menu-bar entry point, so it runs
+    /// as a regular Dock app instead (window opens on launch, Dock click
+    /// reopens it) — read once at launch, so a change needs a relaunch.
+    static var showMenuBarIcon: Bool {
+        get { d.object(forKey: "show_menu_bar_icon") as? Bool ?? true }
+        set { d.set(newValue, forKey: "show_menu_bar_icon") }
+    }
+
     // MARK: - MCP / QueryServer
 
     /// Localhost port for the JSON HTTP server. 9277 by default
@@ -77,6 +88,17 @@ enum Store {
     static var queryServerEnabled: Bool {
         get { d.object(forKey: "query_server_enabled") as? Bool ?? true }
         set { d.set(newValue, forKey: "query_server_enabled") }
+    }
+
+    // MARK: - Privacy
+
+    /// Whether the user has dismissed the Full Disk Access notice that
+    /// Burrow shows before scans which walk TCC-protected directories
+    /// (issue #3). Defaults to false so first-run users see it once;
+    /// sticks once dismissed so we never nag.
+    static var fullDiskAccessNoticeDismissed: Bool {
+        get { d.object(forKey: "fda_notice_dismissed") as? Bool ?? false }
+        set { d.set(newValue, forKey: "fda_notice_dismissed") }
     }
 
     // MARK: - History view

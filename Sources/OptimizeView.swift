@@ -14,58 +14,77 @@ import SwiftUI
 struct OptimizeView: View {
     @StateObject private var runner = CommandRunner()
     @State private var preview = false
+    @State private var pendingRun: ((Bool) -> Void)? = nil
 
     var body: some View {
         if runner.phase == .idle {
-            ToolHero(tool: .optimize, title: "Optimize", subtitle: Tool.optimize.tagline) {
-                PillButton(title: "Optimize") {
-                    preview = false
-                    runner.run(["optimize"], elevated: true, label: NSLocalizedString("Optimizing", comment: ""))
-                }
-                PillButton(title: "Preview", filled: false) {
-                    preview = true
-                    runner.run(["optimize", "--dry-run"], label: NSLocalizedString("Optimize preview", comment: ""))
+            if pendingRun != nil {
+                FullDiskAccessRequired(
+                    accent: Tool.optimize.accent,
+                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending(elevate: false) } },
+                    onRunAnyway: { runPending(elevate: true) },
+                    onCancel: { pendingRun = nil })
+            } else {
+                ToolHero(tool: .optimize, title: "Optimize", subtitle: Tool.optimize.tagline) {
+                    PillButton(title: "Optimize") { runOptimize() }
+                    PillButton(title: "Preview", filled: false) { runPreview() }
                 }
             }
         } else {
-            let report = parseTaskReport(runner.lines)
             VStack(spacing: 0) {
                 statusBar.padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 12)
                 Rectangle().fill(Brand.hairline).frame(height: 1)
-                if isDone, !preview {
+                if isDone, !preview, !runner.wasCancelled {
                     DoneBanner(accent: Tool.optimize.accent, title: "Maintenance complete",
-                               detail: String(format: NSLocalizedString("%d areas refreshed", comment: ""), report.groups.count))
+                               detail: String(format: NSLocalizedString("%d areas refreshed", comment: ""), runner.groups.count))
                 }
-                TaskReportView(groups: report.groups, accent: Tool.optimize.accent)
+                TaskReportView(groups: runner.groups, accent: Tool.optimize.accent)
             }
         }
     }
 
     private var statusBar: some View {
         HStack(spacing: 10) {
-            if runner.phase == .running { ProgressView().controlSize(.small).tint(Tool.optimize.accent) }
+            if isRunning { ProgressView().controlSize(.small).tint(Tool.optimize.accent) }
             Text(statusText).font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
             Spacer()
-            if isDone {
-                Button {
-                    preview = false
-                    runner.run(["optimize"], elevated: true, label: NSLocalizedString("Optimizing", comment: ""))
-                } label: {
-                    Label("Run again", systemImage: "arrow.clockwise")
+            if isRunning {
+                Button { runner.cancel() } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .font(Brand.mono(11)).foregroundStyle(Brand.red)
+                }.buttonStyle(.plain)
+            }
+            if isDone || isFailed {
+                Button { runner.reset() } label: {
+                    Label("Back", systemImage: "chevron.left")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
                 }.buttonStyle(.plain)
             }
         }
     }
 
+    private var isRunning: Bool { runner.phase == .running }
     private var isDone: Bool { if case .done = runner.phase { return true }; return false }
+    private var isFailed: Bool { if case .failed = runner.phase { return true }; return false }
 
     private var statusText: String {
         switch runner.phase {
         case .running: return preview ? NSLocalizedString("Previewing maintenance…", comment: "") : NSLocalizedString("Running maintenance…", comment: "")
-        case .done:    return preview ? NSLocalizedString("Preview complete.", comment: "") : NSLocalizedString("Maintenance complete.", comment: "")
+        case .done:    return runner.wasCancelled ? NSLocalizedString("Stopped.", comment: "")
+            : (preview ? NSLocalizedString("Preview complete.", comment: "") : NSLocalizedString("Maintenance complete.", comment: ""))
         case .failed(let m): return String(format: NSLocalizedString("Failed: %@", comment: ""), m)
         case .idle:    return ""
         }
+    }
+
+    private func guarded(_ work: @escaping (Bool) -> Void) {
+        if Privacy.hasFullDiskAccess() { work(false) } else { pendingRun = work }
+    }
+    private func runPending(elevate: Bool) { let r = pendingRun; pendingRun = nil; r?(elevate) }
+
+    /// Optimize already runs elevated (root) → no flood, no gate.
+    private func runOptimize() { preview = false; runner.run(["optimize"], elevated: true, label: "Optimizing") }
+    private func runPreview() {
+        guarded { elevate in preview = true; runner.run(["optimize", "--dry-run"], elevated: elevate, label: "Optimize preview") }
     }
 }

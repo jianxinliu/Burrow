@@ -15,15 +15,58 @@ import AppKit
 struct AnalyzeView: View {
     @StateObject private var model = AnalyzeModel()
     var isActive: Bool = true
+    @State private var showFDAGate = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar.frame(width: 232)
-            Rectangle().fill(Brand.hairline).frame(width: 1)
-            mainArea
+        Group {
+            if showFDAGate {
+                fdaGate
+            } else {
+                HStack(spacing: 0) {
+                    sidebar.frame(width: 232)
+                    Rectangle().fill(Brand.hairline).frame(width: 1)
+                    mainArea
+                }
+            }
         }
-        .onAppear { if isActive { model.startIfNeeded() } }
-        .onChange(of: isActive) { _, now in if now { model.startIfNeeded() } }
+        .onAppear { evaluateStart() }
+        .onChange(of: isActive) { _, now in if now { evaluateStart() } }
+    }
+
+    /// Analyze auto-scans the home folder on first open — exactly when
+    /// the macOS "access data from other apps" flood hits (issue #3). If
+    /// we lack Full Disk Access and the user hasn't dismissed the notice,
+    /// gate the scan behind it rather than walking protected dirs
+    /// unannounced.
+    private func evaluateStart() {
+        guard isActive, !model.started else { return }
+        if Privacy.shouldOfferFullDiskAccessNow() {
+            showFDAGate = true
+        } else {
+            // FDA may have just been granted (or the notice dismissed) while
+            // the gate was up — make sure it doesn't keep covering the view.
+            showFDAGate = false
+            model.startIfNeeded()
+        }
+    }
+
+    private var fdaGate: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            FullDiskAccessNotice(
+                accent: Tool.analyze.accent,
+                continueLabel: "Scan anyway",
+                onContinue: { showFDAGate = false; model.startIfNeeded() },
+                onDontAskAgain: {
+                    Store.fullDiskAccessNoticeDismissed = true
+                    showFDAGate = false
+                    model.startIfNeeded()
+                })
+            .frame(maxWidth: 460)
+            Spacer(); Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 24)
     }
 
     // MARK: Sidebar
@@ -213,8 +256,12 @@ final class AnalyzeModel: ObservableObject {
     @Published var loading = false
     @Published var error: String?
     private var total: Int64 = 0
-    private var started = false
+    private(set) var started = false
     private let opId = UUID()
+    /// Cache scan results by path so navigating back/into already-seen
+    /// folders is instant instead of re-running `mo analyze` (~4 CPU-s)
+    /// each time. Refresh clears the current path to force a fresh walk.
+    private var cache: [String: (entries: [DiskScanEntry], total: Int64)] = [:]
 
     var summaryLine: String {
         entries.isEmpty ? "—" : String(format: NSLocalizedString("%d items · %@", comment: ""), entries.count, Fmt.bytes(total))
@@ -242,19 +289,27 @@ final class AnalyzeModel: ObservableObject {
 
     func refresh() {
         guard let last = crumbs.last else { return }
-        scan(last.path, name: last.name, push: false)
+        cache[last.path] = nil   // drop the cached walk so we re-scan
+        scan(last.path, name: last.name, push: false, force: true)
     }
 
-    private func scan(_ path: String, name: String, push: Bool) {
+    private func scan(_ path: String, name: String, push: Bool, force: Bool = false) {
+        if push { crumbs.append((name, path)) }
+        // Cache hit → show instantly; don't re-run `mo analyze` for a
+        // folder we already walked (back/drill is the common navigation).
+        if !force, let cached = cache[path] {
+            entries = cached.entries; total = cached.total; loading = false; error = nil
+            return
+        }
         loading = true
         error = nil
-        if push { crumbs.append((name, path)) }
         OperationCenter.shared.begin(opId, label: String(format: NSLocalizedString("Analyzing %@", comment: ""), name))
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let r = try DiskScanner.scan(path)
                 let sum = r.totalSize > 0 ? r.totalSize : r.entries.reduce(0) { $0 + $1.size }
                 Task { @MainActor in
+                    self.cache[path] = (r.entries, sum)
                     self.entries = r.entries
                     self.total = sum
                     self.loading = false

@@ -23,9 +23,19 @@ final class StoreTests: XCTestCase {
             "query_server_port",
             "query_server_enabled",
             "last_history_range_minutes",
+            "fda_notice_dismissed",
+            "show_menu_bar_icon",
         ] {
             UserDefaults.standard.removeObject(forKey: k)
         }
+    }
+
+    // Issue #4: the menu-bar icon is on by default; the off-switch must
+    // persist (it's read once at launch to decide menu-bar vs Dock mode).
+    func testShowMenuBarIcon_defaultsTrueAndPersists() {
+        XCTAssertTrue(Store.showMenuBarIcon)
+        Store.showMenuBarIcon = false
+        XCTAssertFalse(Store.showMenuBarIcon)
     }
 
     func testSampleInterval_defaultsTo60() {
@@ -72,6 +82,15 @@ final class StoreTests: XCTestCase {
 
     func testLastHistoryRangeMinutes_defaultsToOneHour() {
         XCTAssertEqual(Store.lastHistoryRangeMinutes, 60)
+    }
+
+    // The Full Disk Access notice (issue #3) must default to "not
+    // dismissed" so first-run users see it, and stick once dismissed so
+    // we don't nag.
+    func testFullDiskAccessNoticeDismissed_defaultsFalseAndPersists() {
+        XCTAssertFalse(Store.fullDiskAccessNoticeDismissed)
+        Store.fullDiskAccessNoticeDismissed = true
+        XCTAssertTrue(Store.fullDiskAccessNoticeDismissed)
     }
 
     func testRoundtripBoolAndInt() {

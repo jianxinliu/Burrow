@@ -22,7 +22,15 @@
 	<string>1</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Burrow scans your Desktop for reclaimable artifacts and leftover installers.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Burrow scans your Documents for reclaimable project artifacts.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Burrow scans your Downloads for leftover installer files (.dmg, .pkg).</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License. Mole CLI © tw93. Independent, not affiliated with mole.fit.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Burrow analyzes external drives when you point it at them.</string>
 </dict>
 </plist>

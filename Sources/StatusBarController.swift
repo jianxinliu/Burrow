@@ -50,6 +50,12 @@ final class StatusBarController {
         }
     }
 
+    deinit {
+        // Explicitly remove the item so toggling the menu-bar setting off
+        // (AppDelegate drops its reference) clears it from the bar at once.
+        NSStatusBar.system.removeStatusItem(item)
+    }
+
     @objc private func handleClick(_ sender: Any?) {
         guard let button = self.item.button else { return }
         if self.popover.isShown {

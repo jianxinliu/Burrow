@@ -48,9 +48,11 @@ struct TaskGroup: Identifiable {
 }
 
 struct TaskSummary {
-    let space: String      // "383.8MB"
-    let items: String      // "372"
-    let categories: String // "20"
+    let space: String          // "383.8MB" — potential (dry-run) or tracked (real) cleanup size
+    let items: String          // "372"
+    let categories: String     // "20"
+    var freeChange: String = "" // "+1.39GB" — real run only (disk freed)
+    var freeNow: String = ""    // "2.50GB"  — real run only (free space after)
 }
 
 enum TaskReportText {
@@ -144,8 +146,14 @@ private extension String {
 
 func parseTaskReport(_ lines: [String]) -> (groups: [TaskGroup], summary: TaskSummary?) {
     var groups: [TaskGroup] = []
-    var summary: TaskSummary?
     let markerChars: Set<Character> = ["→", "➜", "✓", "✔", "•", "◎", "●", "✗", "✘", "✕", "ℹ", "☞"]
+
+    // Summary fields accumulate across lines: the dry-run preview packs
+    // them onto one "Potential space:" line, but the real run spreads
+    // "Tracked cleanup:", "Free space change:" and "Free space now:" over
+    // three separate lines.
+    var space = "", items = "", cats = "", freeChange = "", freeNow = ""
+    var sawSummary = false
 
     for raw in lines {
         let t = raw.trimmingCharacters(in: .whitespaces)
@@ -158,27 +166,46 @@ func parseTaskReport(_ lines: [String]) -> (groups: [TaskGroup], summary: TaskSu
             let text = String(t.dropFirst()).trimmingCharacters(in: .whitespaces)
             if groups.isEmpty { groups.append(TaskGroup(title: "Summary", items: [])) }
             groups[groups.count - 1].items.append(TaskItem(marker: TaskMarker(first), text: text))
-        } else if t.hasPrefix("Potential space:") {
-            summary = parseSummary(t)
+        } else if mergeSummaryFields(line: t, space: &space, items: &items, categories: &cats,
+                                     freeChange: &freeChange, freeNow: &freeNow) {
+            sawSummary = true
         } else if t == t.uppercased(), t.count > 4, t.count < 40, !t.contains(":"), !t.contains("|") {
             groups.append(TaskGroup(title: t.capitalized, items: []))
         }
     }
+    let summary = sawSummary
+        ? TaskSummary(space: space, items: items, categories: cats,
+                      freeChange: freeChange, freeNow: freeNow)
+        : nil
     return (groups.filter { !$0.items.isEmpty }, summary)
 }
 
-private func parseSummary(_ line: String) -> TaskSummary {
-    var space = "", items = "", cats = ""
+/// Recognise a summary line from either the dry-run preview ("Potential
+/// space: … | Items: … | Categories: …") or the real run's footer
+/// ("Tracked cleanup: …", "Free space change: …", "Free space now: …")
+/// and merge its fields into the accumulators. Returns whether the line
+/// was a summary line, so the caller stops matching other shapes for it.
+private func mergeSummaryFields(line: String,
+                                space: inout String, items: inout String,
+                                categories: inout String,
+                                freeChange: inout String, freeNow: inout String) -> Bool {
+    let lower = line.lowercased()
+    guard lower.contains("potential space") || lower.contains("tracked cleanup")
+       || lower.contains("free space change") || lower.contains("free space now") else {
+        return false
+    }
     for part in line.components(separatedBy: "|") {
         let kv = part.components(separatedBy: ":")
         guard kv.count >= 2 else { continue }
         let key = kv[0].trimmingCharacters(in: .whitespaces).lowercased()
-        let val = kv[1].trimmingCharacters(in: .whitespaces)
-        if key.contains("space") { space = val }
+        let val = kv[1...].joined(separator: ":").trimmingCharacters(in: .whitespaces)
+        if key.contains("potential space") || key.contains("tracked cleanup") { space = val }
+        else if key.contains("free space change") { freeChange = val }
+        else if key.contains("free space now") { freeNow = val }
         else if key.contains("item") { items = val }
-        else if key.contains("categor") { cats = val }
+        else if key.contains("categor") { categories = val }
     }
-    return TaskSummary(space: space, items: items, categories: cats)
+    return true
 }
 
 // MARK: - Streaming runner
@@ -189,17 +216,26 @@ final class CommandRunner: ObservableObject {
 
     @Published var phase: Phase = .idle
     @Published var lines: [String] = []
+    /// Parsed report, recomputed once per coalesced flush — NOT per SwiftUI
+    /// render. Views read these instead of re-parsing `lines` every frame.
+    @Published private(set) var groups: [TaskGroup] = []
+    @Published private(set) var summary: TaskSummary?
+    /// Set when the user aborts via `cancel()`, so the UI can say "Stopped"
+    /// rather than reporting the terminated process as a plain failure.
+    @Published private(set) var wasCancelled = false
 
     let opId = UUID()
     private var operationLabel: String?
     private var task: Process?
     private var buffer = ""
+    private var pending: [String] = []
+    private var flushScheduled = false
     private var tailTimer: Timer?
     private var logHandle: FileHandle?
 
     func run(_ args: [String], elevated: Bool = false, label: String? = nil) {
         guard let mo = MoleCLI.findExecutable() else { phase = .failed("mo not found"); return }
-        lines = []; buffer = ""; phase = .running
+        lines = []; buffer = ""; pending = []; groups = []; summary = nil; wasCancelled = false; phase = .running
         operationLabel = label
         if let label { OperationCenter.shared.begin(opId, label: label) }
         if elevated { runElevated(mo: mo, args: args); return }
@@ -236,8 +272,20 @@ final class CommandRunner: ObservableObject {
     }
 
     func cancel() {
+        wasCancelled = true
         if let t = task, t.isRunning { t.terminate() }
         tailTimer?.invalidate(); tailTimer = nil
+        // If the process already exited (or never streamed), settle the UI
+        // immediately rather than waiting on a terminationHandler that may
+        // not fire for an already-dead task.
+        if task == nil || task?.isRunning == false { phase = .done(130) }
+    }
+
+    /// Return to the idle (hero) state — used by the "Back" button on a
+    /// finished report so the user can get back to the tool's menu.
+    func reset() {
+        phase = .idle
+        lines = []; buffer = ""; pending = []; groups = []; summary = nil; wasCancelled = false
     }
 
     /// Run `mo <args>` as root via ONE osascript auth prompt, instead of
@@ -248,7 +296,11 @@ final class CommandRunner: ObservableObject {
         let safe = args.map { $0.filter(\.isLetter) }.joined(separator: "-")
         let logPath = NSTemporaryDirectory() + "burrow-op-\(safe).log"
         FileManager.default.createFile(atPath: logPath, contents: Data())
-        let inner = "\(mo) \(args.joined(separator: " ")) > '\(logPath)' 2>&1"
+        // Single-quote the executable path (args are hardcoded literals) so a
+        // space or metacharacter in the resolved `mo` path can't break or
+        // inject into the `do shell script` command.
+        func shQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let inner = "\(shQuote(mo)) \(args.joined(separator: " ")) > \(shQuote(logPath)) 2>&1"
         let script = "do shell script \"\(inner)\" with administrator privileges"
 
         let t = Process()
@@ -288,12 +340,38 @@ final class CommandRunner: ObservableObject {
         buffer += s
         var parts = buffer.components(separatedBy: "\n")
         buffer = parts.removeLast()
-        lines.append(contentsOf: parts)
+        guard !parts.isEmpty else { return }
+        pending.append(contentsOf: parts)
         if operationLabel != nil, let last = parts.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
             OperationCenter.shared.detail(opId, TaskReportText.line(last))
         }
+        scheduleFlush()
     }
-    private func flush() { if !buffer.isEmpty { lines.append(buffer); buffer = "" } }
+
+    /// Coalesce output: batch incoming lines and update @Published state at
+    /// most ~8×/sec, so a chatty `mo` run doesn't re-render the report (and
+    /// re-parse every line) on each chunk — the GUI overhead that made the
+    /// app feel heavier and laggier than the bare CLI.
+    private func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in self?.applyPending() }
+    }
+
+    private func applyPending() {
+        flushScheduled = false
+        guard !pending.isEmpty else { return }
+        lines.append(contentsOf: pending)
+        pending.removeAll(keepingCapacity: true)
+        let r = parseTaskReport(lines)
+        groups = r.groups; summary = r.summary
+    }
+
+    /// Final flush at end of stream (plus the trailing partial line).
+    private func flush() {
+        if !buffer.isEmpty { pending.append(buffer); buffer = "" }
+        applyPending()
+    }
 
     nonisolated static func stripAnsi(_ s: String) -> String {
         guard s.contains("\u{1B}") else { return s }

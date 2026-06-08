@@ -227,10 +227,31 @@ final class SoftwareModel: ObservableObject {
         load()
     }
 
-    func setSort(_ s: AppSort) { sort = s }
+    func setSort(_ s: AppSort) {
+        sort = s
+        if s == .recent { ensureRecentDates() }
+    }
 
     func toggle(_ id: String) {
         if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    private var recentLoaded = false
+
+    /// "Last used" needs a Spotlight query per app — only worth it when the
+    /// user actually sorts by Recent, not on every Software-tab open.
+    private func ensureRecentDates() {
+        guard !recentLoaded, !apps.isEmpty else { return }
+        recentLoaded = true
+        let snapshot = apps
+        DispatchQueue.global(qos: .userInitiated).async {
+            let dated = snapshot.map { a in
+                InstalledApp(id: a.id, name: a.name, bundleId: a.bundleId, source: a.source,
+                             uninstallName: a.uninstallName, path: a.path, sizeStr: a.sizeStr,
+                             sizeBytes: a.sizeBytes, lastUsed: Self.lastUsedDate(a.path))
+            }
+            Task { @MainActor in self.apps = dated }
+        }
     }
 
     func load() {
@@ -241,6 +262,8 @@ final class SoftwareModel: ObservableObject {
             Task { @MainActor in
                 self.apps = parsed
                 self.loading = false
+                self.recentLoaded = false
+                if self.sort == .recent { self.ensureRecentDates() }
             }
         }
     }
@@ -267,7 +290,7 @@ final class SoftwareModel: ObservableObject {
                 path: path,
                 sizeStr: sizeStr,
                 sizeBytes: parseSize(sizeStr),
-                lastUsed: lastUsedDate(path))
+                lastUsed: nil)   // computed lazily, only when sorting by Recent
         }
     }
 
@@ -313,13 +336,23 @@ final class SoftwareModel: ObservableObject {
 
         let names = targets.map { $0.uninstallName }
         loading = true
+        // Surface the run in the menu-bar HUD's Activity section too.
+        let opId = UUID()
+        OperationCenter.shared.begin(opId, label: "Uninstalling \(targets.count) app\(targets.count == 1 ? "" : "s")")
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = try? MoleCLI.run(args: ["uninstall"] + names, timeout: 300)
+            let res = try? MoleCLI.run(args: ["uninstall"] + names, timeout: 300)
             let parsed = Self.fetch()
             Task { @MainActor in
                 self.apps = parsed
                 self.selected = []
                 self.loading = false
+                // Re-fetched apps have lastUsed == nil; recompute dates if the
+                // user is still sorting by Recent (mirror load()), else Recent
+                // would silently collapse after an uninstall.
+                self.recentLoaded = false
+                if self.sort == .recent { self.ensureRecentDates() }
+                OperationCenter.shared.end(opId, success: (res?.exitCode ?? 1) == 0,
+                                           detail: "\(targets.count) moved to Trash")
             }
         }
     }
