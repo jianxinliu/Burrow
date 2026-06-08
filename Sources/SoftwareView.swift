@@ -14,7 +14,6 @@
 
 import SwiftUI
 import AppKit
-import CoreServices
 
 struct InstalledApp: Identifiable {
     let id: String
@@ -28,7 +27,10 @@ struct InstalledApp: Identifiable {
     let lastUsed: Date?
 }
 
-enum AppSort: String, CaseIterable { case size = "Size", name = "Name", recent = "Recent", source = "Source" }
+enum AppSort: String, CaseIterable {
+    case size = "Size", name = "Name", recent = "Recent", source = "Source"
+    var label: String { NSLocalizedString(rawValue, comment: "") }
+}
 enum SoftwareSegment { case uninstall, updates }
 
 struct SoftwareView: View {
@@ -57,7 +59,7 @@ struct SoftwareView: View {
             if model.segment == .uninstall {
                 ForEach(AppSort.allCases, id: \.self) { s in
                     Button { model.setSort(s) } label: {
-                        Text(s.rawValue.lowercased())
+                        Text(s.label.lowercased())
                             .font(Brand.mono(11, model.sort == s ? .semibold : .regular))
                             .foregroundStyle(model.sort == s ? Tool.apps.accent : Brand.textSecondary)
                     }.buttonStyle(.plain)
@@ -80,7 +82,7 @@ struct SoftwareView: View {
     private func seg(_ title: String, _ value: SoftwareSegment) -> some View {
         let on = model.segment == value
         return Button { model.segment = value } label: {
-            Text(title).font(Brand.mono(11, on ? .semibold : .regular))
+            Text(NSLocalizedString(title, comment: "")).font(Brand.mono(11, on ? .semibold : .regular))
                 .foregroundStyle(on ? .black : Brand.textSecondary)
                 .padding(.horizontal, 12).padding(.vertical, 5)
                 .background { if on { Capsule().fill(.white) } }
@@ -129,7 +131,7 @@ struct SoftwareView: View {
             Button {
                 model.confirmAndUninstall()
             } label: {
-                Text("Uninstall\(model.selected.isEmpty ? "" : " (\(model.selected.count))")")
+                Text(model.uninstallButtonTitle)
                     .font(Brand.sans(12, .semibold))
                     .foregroundStyle(model.selected.isEmpty ? Brand.textTertiary : .white)
                     .padding(.horizontal, 14).padding(.vertical, 6)
@@ -205,9 +207,17 @@ final class SoftwareModel: ObservableObject {
     }
 
     var selectionLabel: String {
-        if selected.isEmpty { return "\(apps.count) apps" }
+        if selected.isEmpty {
+            return String(format: NSLocalizedString("%d apps", comment: ""), apps.count)
+        }
         let total = apps.filter { selected.contains($0.id) }.reduce(Int64(0)) { $0 + $1.sizeBytes }
-        return "\(selected.count) selected · \(Fmt.bytes(total))"
+        return String(format: NSLocalizedString("%d selected · %@", comment: ""), selected.count, Fmt.bytes(total))
+    }
+
+    var uninstallButtonTitle: String {
+        selected.isEmpty
+            ? NSLocalizedString("Uninstall", comment: "")
+            : String(format: NSLocalizedString("Uninstall (%d)", comment: ""), selected.count)
     }
 
     func startIfNeeded() {
@@ -216,10 +226,31 @@ final class SoftwareModel: ObservableObject {
         load()
     }
 
-    func setSort(_ s: AppSort) { sort = s }
+    func setSort(_ s: AppSort) {
+        sort = s
+        if s == .recent { ensureRecentDates() }
+    }
 
     func toggle(_ id: String) {
         if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    private var recentLoaded = false
+
+    /// "Last used" needs a Spotlight query per app — only worth it when the
+    /// user actually sorts by Recent, not on every Software-tab open.
+    private func ensureRecentDates() {
+        guard !recentLoaded, !apps.isEmpty else { return }
+        recentLoaded = true
+        let snapshot = apps
+        DispatchQueue.global(qos: .userInitiated).async {
+            let dated = snapshot.map { a in
+                InstalledApp(id: a.id, name: a.name, bundleId: a.bundleId, source: a.source,
+                             uninstallName: a.uninstallName, path: a.path, sizeStr: a.sizeStr,
+                             sizeBytes: a.sizeBytes, lastUsed: Self.lastUsedDate(a.path))
+            }
+            Task { @MainActor in self.apps = dated }
+        }
     }
 
     func load() {
@@ -230,6 +261,8 @@ final class SoftwareModel: ObservableObject {
             Task { @MainActor in
                 self.apps = parsed
                 self.loading = false
+                self.recentLoaded = false
+                if self.sort == .recent { self.ensureRecentDates() }
             }
         }
     }
@@ -256,17 +289,16 @@ final class SoftwareModel: ObservableObject {
                 path: path,
                 sizeStr: sizeStr,
                 sizeBytes: parseSize(sizeStr),
-                lastUsed: lastUsedDate(path))
+                lastUsed: nil)   // computed lazily, only when sorting by Recent
         }
     }
 
-    /// Best-effort "last used": Spotlight's kMDItemLastUsedDate when it's
-    /// available, else the bundle's access/modification date.
+    /// Best-effort "last used" from the filesystem (access date, falling back to
+    /// modification date). Deliberately NOT Spotlight (`kMDItemLastUsedDate`):
+    /// querying metadata for every installed app woke `mds`/`mdworker` and spiked
+    /// CPU/energy. Filesystem dates are close enough for the Recent sort and cost
+    /// nothing — no metadata server, no indexing.
     private static func lastUsedDate(_ path: String) -> Date? {
-        if let item = MDItemCreate(nil, path as CFString),
-           let v = MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date {
-            return v
-        }
         let url = URL(fileURLWithPath: path)
         if let vals = try? url.resourceValues(forKeys: [.contentAccessDateKey, .contentModificationDateKey]) {
             return vals.contentAccessDate ?? vals.contentModificationDate
@@ -292,23 +324,33 @@ final class SoftwareModel: ObservableObject {
         let targets = apps.filter { selected.contains($0.id) }
         guard !targets.isEmpty else { return }
         let alert = NSAlert()
-        alert.messageText = "Uninstall \(targets.count) app\(targets.count == 1 ? "" : "s")?"
-        alert.informativeText = "These move to the Trash (recoverable):\n\n"
-            + targets.map { "• \($0.name)" }.joined(separator: "\n")
+        alert.messageText = String(format: NSLocalizedString(targets.count == 1 ? "Uninstall %d app?" : "Uninstall %d apps?", comment: ""), targets.count)
+        alert.informativeText = String(format: NSLocalizedString("These move to the Trash (recoverable):\n\n%@", comment: ""),
+                                       targets.map { "• \($0.name)" }.joined(separator: "\n"))
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: NSLocalizedString("Move to Trash", comment: ""))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let names = targets.map { $0.uninstallName }
         loading = true
+        // Surface the run in the menu-bar HUD's Activity section too.
+        let opId = UUID()
+        OperationCenter.shared.begin(opId, label: "Uninstalling \(targets.count) app\(targets.count == 1 ? "" : "s")")
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = try? MoleCLI.run(args: ["uninstall"] + names, timeout: 300)
+            let res = try? MoleCLI.run(args: ["uninstall"] + names, timeout: 300)
             let parsed = Self.fetch()
             Task { @MainActor in
                 self.apps = parsed
                 self.selected = []
                 self.loading = false
+                // Re-fetched apps have lastUsed == nil; recompute dates if the
+                // user is still sorting by Recent (mirror load()), else Recent
+                // would silently collapse after an uninstall.
+                self.recentLoaded = false
+                if self.sort == .recent { self.ensureRecentDates() }
+                OperationCenter.shared.end(opId, success: (res?.exitCode ?? 1) == 0,
+                                           detail: "\(targets.count) moved to Trash")
             }
         }
     }

@@ -22,18 +22,18 @@ enum Tool: String, CaseIterable, Identifiable {
     static let navOrder: [Tool] = [.clean, .purge, .installer, .optimize, .apps, .analyze, .status]
 
     /// Lowercase tab label (matches the instrument-panel voice).
-    var label: String { rawValue }
+    var label: String { NSLocalizedString(rawValue, comment: "") }
 
     /// Title-case name for heroes / headings.
     var title: String {
         switch self {
-        case .clean:     return "Clean"
-        case .purge:     return "Purge"
-        case .installer: return "Installers"
-        case .apps:      return "Software"
-        case .optimize:  return "Optimize"
-        case .analyze:   return "Analyze"
-        case .status:    return "Status"
+        case .clean:     return NSLocalizedString("Clean", comment: "")
+        case .purge:     return NSLocalizedString("Purge", comment: "")
+        case .installer: return NSLocalizedString("Installers", comment: "")
+        case .apps:      return NSLocalizedString("Software", comment: "")
+        case .optimize:  return NSLocalizedString("Optimize", comment: "")
+        case .analyze:   return NSLocalizedString("Analyze", comment: "")
+        case .status:    return NSLocalizedString("Status", comment: "")
         }
     }
 
@@ -85,13 +85,13 @@ enum Tool: String, CaseIterable, Identifiable {
     /// Our own one-liner per tool — earthy, in keeping with the name.
     var tagline: String {
         switch self {
-        case .clean:     return "Fresh air through old tunnels."
-        case .purge:     return "Clear the diggings dev work leaves behind."
-        case .installer: return "Sweep out the crates you unpacked."
-        case .apps:      return "Shed what you've outgrown."
-        case .optimize:  return "Small turns, a smoother run."
-        case .analyze:   return "Map every chamber below."
-        case .status:    return "Every pulse of the den."
+        case .clean:     return NSLocalizedString("Fresh air through old tunnels.", comment: "")
+        case .purge:     return NSLocalizedString("Clear the diggings dev work leaves behind.", comment: "")
+        case .installer: return NSLocalizedString("Sweep out the crates you unpacked.", comment: "")
+        case .apps:      return NSLocalizedString("Shed what you've outgrown.", comment: "")
+        case .optimize:  return NSLocalizedString("Small turns, a smoother run.", comment: "")
+        case .analyze:   return NSLocalizedString("Map every chamber below.", comment: "")
+        case .status:    return NSLocalizedString("Every pulse of the den.", comment: "")
         }
     }
 }
@@ -103,6 +103,7 @@ enum Pane: Equatable, Hashable {
     case tool(Tool)
     case settings
     case history
+    case activity
 
     /// Window tint scrim. Tools carry their own colour; the utilities use
     /// a neutral dark so they read as "chrome", not a sixth tool.
@@ -110,7 +111,7 @@ enum Pane: Equatable, Hashable {
         switch self {
         case .tool(let t):
             return t.scrim
-        case .settings, .history:
+        case .settings, .history, .activity:
             return LinearGradient(colors: [Color(hex: 0x16150F).opacity(0.90), Brand.nearBlack.opacity(0.97)],
                                   startPoint: .top, endPoint: .bottom)
         }

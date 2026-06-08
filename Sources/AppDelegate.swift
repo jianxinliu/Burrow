@@ -41,22 +41,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var mainWC: NSWindowController?
     fileprivate var pendingInitialPane: Pane = .tool(.status)
 
+    private var installWC: NSWindowController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // No engine yet → guided install instead of a dead-end quit. The
+        // window's Recheck calls startServices() once `mo` is found.
         guard MoleCLI.findExecutable() != nil else {
-            MoleCLI.showMissingAlert()
-            NSApp.terminate(nil)
+            showInstallWindow()
             return
         }
+        startServices()
+    }
 
+    /// Guided onboarding window when `mo` is missing. Stays a regular Dock
+    /// app so the window is reachable; we never run an installer ourselves.
+    private func showInstallWindow() {
+        NSApp.setActivationPolicy(.regular)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 320),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isReleasedWhenClosed = false
+        window.center()
+        let view = MoleInstallView(onReady: { [weak self] in
+            self?.installWC?.close()
+            self?.installWC = nil
+            self?.startServices()
+        })
+        window.contentViewController = NSHostingController(rootView: view)
+        let wc = NSWindowController(window: window)
+        self.installWC = wc
+        wc.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The `mo`-dependent startup: open the DB, start the server/sampler/
+    /// maintenance, and install the status item. Called either directly at
+    /// launch or after the guided install finds `mo`.
+    private func startServices() {
         let db: DB
         do {
             db = try DB.openDefault()
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Couldn't open Burrow's history database"
-            alert.informativeText = "\(error.localizedDescription)\n\nThe app will quit."
+            alert.messageText = NSLocalizedString("Couldn't open Burrow's history database", comment: "")
+            alert.informativeText = String(format: NSLocalizedString("%@\n\nThe app will quit.", comment: ""),
+                                           error.localizedDescription)
             alert.alertStyle = .critical
             alert.runModal()
             NSApp.terminate(nil)
@@ -79,8 +113,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.maintenance = maintenance
         maintenance.start()
 
-        self.statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+        if Store.showMenuBarIcon {
+            self.statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+        }
         self.setupMainMenu()
+
+        // Without the menu-bar icon there's no agent entry point (the app is
+        // LSUIElement, so no Dock icon either). Run as a regular Dock app and
+        // open the window on launch so it stays reachable (issue #4).
+        if !Store.showMenuBarIcon, #available(macOS 14, *) {
+            NSApp.setActivationPolicy(.regular)
+            self.openMainWindow(initial: .tool(.status))
+        }
 
         // Dev affordance: launch with BURROW_OPEN_ON_LAUNCH=1 to pop the
         // main window straight away (used for screenshot/verify loops).
@@ -128,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // and drag-anywhere so there's no visible chrome bar.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.title = "Burrow"
+        window.title = NSLocalizedString("Burrow", comment: "")
         window.isOpaque = false
         window.backgroundColor = .clear
         window.isMovableByWindowBackground = true
@@ -162,8 +206,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - Window delegate
 
     func windowWillClose(_ notification: Notification) {
-        // Dashboard closed → back to a pure menu-bar agent (no Dock icon).
-        NSApp.setActivationPolicy(.accessory)
+        // Retreat to a pure menu-bar agent only when the menu-bar icon is
+        // the actual entry point — keyed off what we installed at launch,
+        // not the live Store value (which a mid-session toggle could change
+        // before a relaunch, stranding the app). With no status item, keep
+        // the Dock icon so the app stays reachable (issue #4).
+        if statusBar != nil {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Clicking the Dock icon (menu-bar-disabled mode) reopens the window.
+    /// When windows are already visible we return false so AppKit performs
+    /// its default raise-windows behaviour rather than us suppressing it.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard !hasVisibleWindows else { return false }
+        if #available(macOS 14, *) { self.openMainWindow(initial: .tool(.status)) }
+        return true
+    }
+
+    // MARK: - Menu-bar visibility (live)
+
+    /// Apply the "Show menu bar icon" setting immediately, without a relaunch.
+    /// Installs/removes the status item, and when hiding it keeps a Dock
+    /// presence + an open window so the app never becomes unreachable.
+    func applyMenuBarVisibility(_ show: Bool) {
+        guard let db = db, let sampler = sampler else { return }
+        if show {
+            if statusBar == nil {
+                statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+            }
+        } else {
+            statusBar = nil   // StatusBarController.deinit removes the item
+            if #available(macOS 14, *) {
+                NSApp.setActivationPolicy(.regular)
+                // mainWC is retained (isReleasedWhenClosed = false), so its
+                // window is non-nil even when closed — check visibility, not nil,
+                // so hiding the menu bar always leaves a visible window.
+                if mainWC?.window?.isVisible != true { openMainWindow(initial: .tool(.status)) }
+            }
+        }
     }
 
     // MARK: - Main menu
@@ -179,37 +261,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
         appItem.submenu = appMenu
-        appMenu.addItem(withTitle: "About Burrow",
+        appMenu.addItem(withTitle: NSLocalizedString("About Burrow", comment: ""),
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        let settings = NSMenuItem(title: "Settings…",
+        let settings = NSMenuItem(title: NSLocalizedString("Settings…", comment: ""),
                                   action: #selector(openSettingsFromMenu), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Burrow", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quit Burrow", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: NSLocalizedString("Hide Burrow", comment: ""), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: NSLocalizedString("Quit Burrow", comment: ""), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         // Edit menu (text editing in search fields etc.)
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit")
+        let editMenu = NSMenu(title: NSLocalizedString("Edit", comment: ""))
         editItem.submenu = editMenu
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(withTitle: NSLocalizedString("Undo", comment: ""), action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: NSLocalizedString("Redo", comment: ""), action: Selector(("redo:")), keyEquivalent: "Z")
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: NSLocalizedString("Cut", comment: ""), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: NSLocalizedString("Copy", comment: ""), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: NSLocalizedString("Paste", comment: ""), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: NSLocalizedString("Select All", comment: ""), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         // Window menu
         let winItem = NSMenuItem()
         mainMenu.addItem(winItem)
-        let winMenu = NSMenu(title: "Window")
+        let winMenu = NSMenu(title: NSLocalizedString("Window", comment: ""))
         winItem.submenu = winMenu
-        winMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        winMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        winMenu.addItem(withTitle: NSLocalizedString("Minimize", comment: ""), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        winMenu.addItem(withTitle: NSLocalizedString("Close", comment: ""), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 
         NSApp.mainMenu = mainMenu
         NSApp.windowsMenu = winMenu

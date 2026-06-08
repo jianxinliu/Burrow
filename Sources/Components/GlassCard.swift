@@ -41,7 +41,7 @@ struct Eyebrow: View {
         HStack(spacing: 5) {
             Image(systemName: glyph)
                 .font(.system(size: 9, weight: .bold))
-            Text(text.uppercased())
+            Text(NSLocalizedString(text, comment: "").uppercased())
                 .font(Brand.mono(10, .bold))
                 .tracking(0.8)
         }
@@ -55,7 +55,7 @@ struct Chip: View {
     var color: Color = Brand.textSecondary
 
     var body: some View {
-        Text(text)
+        Text(NSLocalizedString(text, comment: ""))
             .font(Brand.mono(10, .medium))
             .foregroundStyle(color)
             .padding(.horizontal, 6)

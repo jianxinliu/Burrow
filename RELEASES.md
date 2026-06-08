@@ -1,28 +1,32 @@
-# Burrow 0.4.0
+# Burrow 0.5.1
 
-The first release as a full, open-source **mole.fit** — a native macOS GUI
-for the [Mole](https://github.com/tw93/Mole) CLI (`mo`).
+A maintenance release. The headline fix: **Full Disk Access actually works now.**
 
-## Five tools, one window
-- **Status** — live dashboard: health score, CPU, memory, GPU, disk,
-  network, battery with per-metric sparklines, and a sortable/pinnable
-  process table.
-- **Analyze** — squarified treemap of your disk; drill in, reveal in Finder.
-- **Software** — installed-app list with search/sort + multi-select
-  uninstall, plus a Homebrew **Updates** tab.
-- **Clean** — preview what's reclaimable, then clean for real.
-- **Optimize** — one-tap safe maintenance.
+## Fixes
+- **Full Disk Access grants now take effect.** Earlier builds shipped with
+  only the linker's stub signature, which macOS treats as unsigned — so the
+  TCC system couldn't bind a Full Disk Access grant to the app, and granting
+  it appeared to do nothing. Releases are now **ad-hoc signed** with a real,
+  stable code identity, so the grant sticks. The Full Disk Access screen also
+  gained a "Quit & Reopen" path, since macOS only applies a fresh grant at
+  the next launch.
+- **Lower energy use in Software.** Dropped a per-app Spotlight
+  (`kMDItemLastUsedDate`) query that was waking `mds`/`mdworker`; the
+  "recent" sort now uses the filesystem access date instead.
 
-## Burrow's own extras
-- **Menu-bar HUD** with live status of jobs running in the app.
-- **History** — long-range charts (5 m → 90 d) over a local SQLite history.
-- **MCP server** (HTTP + `Burrow --mcp` stdio) for Claude Code.
+## New
+- **Two more MCP tools** for agents (read-only): `burrow_cleanup_history`
+  (itemised clean/optimize/uninstall sessions — when, item count, bytes freed)
+  and `burrow_deleted_files` (the exact paths Mole removed or trashed,
+  newest first). Answers "what did the last cleanup actually delete?"
 
-## Requirements
-- macOS 14+
-- `brew install mole`
+## Install
+```
+brew install --cask caezium/tap/burrow
+```
+Pulls in the `mole` engine and clears the Gatekeeper quarantine for you.
+Still unsigned/pre-1.0 (ad-hoc only) — not yet notarized.
 
-## Install notes
-Unsigned build for now. After copying to `/Applications`:
-`xattr -cr /Applications/Burrow.app`, or right-click → Open the first time.
-A notarized release + Homebrew cask are planned.
+---
+Older releases: see the
+[Releases page](https://github.com/caezium/Burrow/releases).

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
 # Build a Release Burrow.app and package it as a distributable .zip, then
-# print the sha256 for the Homebrew cask. The build is UNSIGNED — notarize
-# separately (see scripts/notarize.sh notes) for a Gatekeeper-clean release.
+# print the sha256 for the Homebrew cask. The build carries no Developer ID
+# and isn't notarized — but it IS ad-hoc signed (see below), which is what
+# lets macOS Full Disk Access grants actually take effect. For a fully
+# Gatekeeper-clean release, sign + notarize with a Developer ID on top (the
+# CI release workflow does this when the signing secrets are present).
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -12,7 +15,7 @@ command -v xcodegen >/dev/null 2>&1 || { echo "need xcodegen — brew install xc
 echo "==> xcodegen generate"
 xcodegen generate >/dev/null
 
-echo "==> building Release (unsigned)"
+echo "==> building Release (no Developer ID; ad-hoc signed below)"
 rm -rf build_dist
 xcodebuild -project Burrow.xcodeproj -scheme Burrow \
   -configuration Release -destination 'generic/platform=macOS' \
@@ -22,6 +25,20 @@ xcodebuild -project Burrow.xcodeproj -scheme Burrow \
 
 APP="build_dist/Build/Products/Release/Burrow.app"
 [ -d "$APP" ] || { echo "build failed: $APP missing"; exit 1; }
+
+# Ad-hoc sign the bundle. CODE_SIGNING_ALLOWED=NO above leaves only the
+# linker's automatic signature (codesign flags: adhoc,linker-signed), which
+# `codesign --verify` rejects as "not signed at all". macOS TCC won't bind a
+# Full Disk Access grant to a code identity it considers invalid, so on the
+# unsigned build, granting FDA silently does nothing — the app keeps asking.
+# An explicit `codesign --sign -` gives the bundle a real, stable cdhash that
+# the FDA grant attaches to. (The cdhash still changes every rebuild, so each
+# new version must be re-granted — only a Developer ID identity avoids that.)
+echo "==> ad-hoc signing (stable code identity so Full Disk Access grants stick)"
+codesign --force --sign - \
+  --entitlements Resources/Burrow.entitlements \
+  "$APP"
+codesign --verify --strict --verbose=2 "$APP"
 
 VERSION=$(defaults read "$PWD/$APP/Contents/Info" CFBundleShortVersionString)
 mkdir -p dist

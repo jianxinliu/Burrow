@@ -58,6 +58,17 @@ enum Store {
         set { d.set(newValue, forKey: "auto_vacuum") }
     }
 
+    // MARK: - Menu bar
+
+    /// Whether to install the menu-bar status item (issue #4). On by
+    /// default. When off, Burrow has no menu-bar entry point, so it runs
+    /// as a regular Dock app instead (window opens on launch, Dock click
+    /// reopens it) — read once at launch, so a change needs a relaunch.
+    static var showMenuBarIcon: Bool {
+        get { d.object(forKey: "show_menu_bar_icon") as? Bool ?? true }
+        set { d.set(newValue, forKey: "show_menu_bar_icon") }
+    }
+
     // MARK: - AI (Explain lens)
 
     /// Whether the optional "Explain" AI lens is enabled. Off by default —
@@ -68,6 +79,16 @@ enum Store {
         set { d.set(newValue, forKey: "ai_enabled") }
     }
 
+    /// Which Explain backend to use: "ollama" (local, default) or "openai"
+    /// (any OpenAI-compatible server — LM Studio, llama.cpp, OpenAI, …).
+    static var aiProvider: String {
+        get {
+            let v = (d.string(forKey: "ai_provider") ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            return v == "openai" ? "openai" : "ollama"
+        }
+        set { d.set(newValue, forKey: "ai_provider") }
+    }
+
     /// The local Ollama model the Explain lens talks to. Small + fast by
     /// default; the user can point it at any model they've pulled.
     static var aiOllamaModel: String {
@@ -76,6 +97,35 @@ enum Store {
             return v.isEmpty ? "llama3.2" : v
         }
         set { d.set(newValue, forKey: "ai_ollama_model") }
+    }
+
+    /// Base URL for the OpenAI-compatible endpoint — must end in `/v1`.
+    /// Defaults to LM Studio's local server (Developer ▸ Start Server).
+    static var aiOpenAIBaseURL: String {
+        get {
+            let v = (d.string(forKey: "ai_openai_base_url") ?? "").trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? "http://127.0.0.1:1234/v1" : v
+        }
+        set { d.set(newValue, forKey: "ai_openai_base_url") }
+    }
+
+    /// Model id for the OpenAI-compatible endpoint. LM Studio accepts the
+    /// loaded model's id (or the alias most servers map to it).
+    static var aiOpenAIModel: String {
+        get {
+            let v = (d.string(forKey: "ai_openai_model") ?? "").trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? "local-model" : v
+        }
+        set { d.set(newValue, forKey: "ai_openai_model") }
+    }
+
+    /// Optional Bearer API key for the OpenAI-compatible endpoint. Leave
+    /// blank for LM Studio / local servers that don't check it; required
+    /// for hosted APIs (e.g. OpenAI). Stored in UserDefaults — fine for a
+    /// localhost key; move to Keychain before shipping cloud keys.
+    static var aiOpenAIKey: String {
+        get { d.string(forKey: "ai_openai_key") ?? "" }
+        set { d.set(newValue, forKey: "ai_openai_key") }
     }
 
     // MARK: - MCP / QueryServer
@@ -97,6 +147,32 @@ enum Store {
     static var queryServerEnabled: Bool {
         get { d.object(forKey: "query_server_enabled") as? Bool ?? true }
         set { d.set(newValue, forKey: "query_server_enabled") }
+    }
+
+    /// Key for the destructive-MCP opt-in. Shared so the MCP process can
+    /// read it with a fresh, cross-process read (see `mcpActionsEnabled`).
+    static let mcpActionsEnabledKey = "mcp_actions_enabled"
+
+    /// Whether AI agents may run *destructive* cleanups (real `mo clean`,
+    /// `optimize`, `uninstall`) through the MCP server. OFF by default:
+    /// agents can always read metrics and run dry-run previews, but a real
+    /// deletion needs BOTH this switch AND an explicit `confirm:true` on the
+    /// tool call. The MCP server is a separate, possibly long-lived process,
+    /// so the getter reads straight from cfprefsd (not the cached
+    /// UserDefaults snapshot) to see a toggle the GUI just flipped.
+    static var mcpActionsEnabled: Bool {
+        get {
+            CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
+            if let v = CFPreferencesCopyAppValue(mcpActionsEnabledKey as CFString,
+                                                 kCFPreferencesCurrentApplication) as? Bool {
+                return v
+            }
+            return false
+        }
+        set {
+            d.set(newValue, forKey: mcpActionsEnabledKey)
+            d.synchronize()
+        }
     }
 
     // MARK: - Privacy

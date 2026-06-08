@@ -32,6 +32,7 @@ struct PopupView: View {
         // the box and the arrow, so they match.
         VStack(alignment: .leading, spacing: 9) {
             header
+            if ops.hasActivity { activitySection }   // running jobs up top, where they're seen
             if let s = model.snap {
                 healthHero(s)
                 metricGrid(s)
@@ -40,7 +41,6 @@ struct PopupView: View {
             } else {
                 waiting
             }
-            if ops.hasActivity { activitySection }
             Rectangle().fill(Brand.hairline).frame(height: 1)
             footer
         }
@@ -76,20 +76,15 @@ struct PopupView: View {
     // MARK: Activity (cards for running / just-finished jobs, at the bottom)
 
     private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Eyebrow(text: "Activity", glyph: "bolt.fill", color: Brand.gold)
-            ForEach(ops.ops) { op in
-                HStack(spacing: 8) {
-                    opIcon(op.phase)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(op.label).font(Brand.sans(11, .medium)).foregroundStyle(Brand.textPrimary).lineLimit(1)
-                        if !op.detail.isEmpty {
-                            Text(op.detail).font(Brand.mono(9)).foregroundStyle(Brand.textTertiary).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 4)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Eyebrow(text: "Activity", glyph: "bolt.fill", color: Brand.gold)
+                Spacer()
+                if runningCount > 0 {
+                    Text("\(runningCount) running").font(Brand.mono(9, .medium)).foregroundStyle(Brand.gold)
                 }
             }
+            ForEach(ops.ops) { op in opRow(op) }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,15 +92,90 @@ struct PopupView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Brand.hairline, lineWidth: 1))
     }
 
+    private var runningCount: Int { ops.ops.filter { $0.phase == .running }.count }
+
     @ViewBuilder
-    private func opIcon(_ phase: OperationCenter.Phase) -> some View {
+    private func opRow(_ op: OperationCenter.Op) -> some View {
+        let accent = opAccent(op.label)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                opIcon(op.phase, accent: accent)
+                Text(op.label).font(Brand.sans(11, .medium)).foregroundStyle(Brand.textPrimary).lineLimit(1)
+                Spacer(minLength: 4)
+                opStatus(op)
+            }
+            if !op.detail.isEmpty {
+                Text(op.detail).font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
+                    .lineLimit(1).truncationMode(.middle).padding(.leading, 23)
+            }
+            if op.phase == .running {
+                IndeterminateBar(color: accent).padding(.leading, 23)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func opIcon(_ phase: OperationCenter.Phase, accent: Color) -> some View {
         switch phase {
         case .running:
-            ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 16, height: 16)
+            Circle().fill(accent).frame(width: 8, height: 8)
+                .shadow(color: accent.opacity(0.6), radius: 3).padding(3.5)
         case .done:
             Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(Brand.green)
         case .failed:
             Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(Brand.red)
+        }
+    }
+
+    @ViewBuilder
+    private func opStatus(_ op: OperationCenter.Op) -> some View {
+        switch op.phase {
+        case .running:
+            TimelineView(.periodic(from: Date(), by: 1)) { ctx in
+                Text(Self.elapsed(from: op.startedAt, to: ctx.date))
+                    .font(Brand.mono(9)).foregroundStyle(Brand.textSecondary)
+            }
+        case .done:
+            Text("done").font(Brand.mono(9, .medium)).foregroundStyle(Brand.green)
+        case .failed:
+            Text("failed").font(Brand.mono(9, .medium)).foregroundStyle(Brand.red)
+        }
+    }
+
+    /// Tint a job by its verb so the menu-bar HUD echoes the tool colours.
+    private func opAccent(_ label: String) -> Color {
+        let l = label.lowercased()
+        if l.contains("clean") { return Tool.clean.accent }
+        if l.contains("optimi") { return Tool.optimize.accent }
+        if l.contains("analy") { return Tool.analyze.accent }
+        if l.contains("uninstall") { return Tool.apps.accent }
+        return Brand.gold
+    }
+
+    static func elapsed(from start: Date, to now: Date) -> String {
+        let s = max(0, Int(now.timeIntervalSince(start)))
+        return s < 60 ? "\(s)s" : String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    /// Thin indeterminate progress bar for a running op — conveys "still
+    /// working" without a fake percentage we don't have.
+    private struct IndeterminateBar: View {
+        let color: Color
+        @State private var animate = false
+        var body: some View {
+            GeometryReader { geo in
+                Capsule().fill(color.opacity(0.16))
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(color)
+                            .frame(width: geo.size.width * 0.35)
+                            .offset(x: animate ? geo.size.width * 0.65 : 0)
+                    }
+                    .clipShape(Capsule())
+            }
+            .frame(height: 3)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { animate = true }
+            }
         }
     }
 
@@ -133,7 +203,8 @@ struct PopupView: View {
 
     private func specLine(_ s: MoleStatus) -> String {
         let cpu = s.hardware.cpuModel.replacingOccurrences(of: "Apple ", with: "")
-        return "\(cpu) · \(s.hardware.totalRam) · up \(Fmt.uptime(s.uptimeSeconds))"
+        return String(format: NSLocalizedString("%@ · %@ · up %@", comment: ""),
+                      cpu, s.hardware.totalRam, Fmt.uptime(s.uptimeSeconds))
     }
 
     // MARK: Metric grid
@@ -165,7 +236,8 @@ struct PopupView: View {
     }
     private func netFoot(_ s: MoleStatus) -> String {
         let n = s.network.first(where: { !$0.ip.isEmpty }) ?? s.network.first
-        return n.map { "↓ \(Int($0.rxRateMbs * 1024)) ↑ \(Int($0.txRateMbs * 1024)) KB/s" } ?? "—"
+        return n.map { String(format: NSLocalizedString("↓ %d ↑ %d KB/s", comment: ""),
+                              Int($0.rxRateMbs * 1024), Int($0.txRateMbs * 1024)) } ?? "—"
     }
     private func gpuValue(_ s: MoleStatus) -> (String, String) {
         let u = s.gpu?.first?.usage ?? -1
@@ -197,16 +269,22 @@ struct PopupView: View {
 
     private var footer: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 5) {
+            // Icon pills — text labels for every tool overflow the narrow
+            // popover; glyphs (tinted by tool) stay compact and tidy.
+            HStack(spacing: 6) {
                 ForEach(Tool.navOrder) { tool in
                     Button { open(.tool(tool)) } label: {
-                        Text(tool.label).font(Brand.mono(9, .medium))
-                            .foregroundStyle(Brand.textSecondary)
-                            .padding(.horizontal, 7).padding(.vertical, 4)
+                        Image(systemName: tool.glyph)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(tool.accent)
+                            .frame(width: 30, height: 26)
                             .background(Capsule().fill(Brand.chipFill))
-                    }.buttonStyle(.plain)
+                    }
+                    .buttonStyle(.plain)
+                    .help(tool.title)
                 }
             }
+            .frame(maxWidth: .infinity)
             HStack(spacing: 12) {
                 iconButton("clock.arrow.circlepath") { openHistory() }
                 iconButton("gearshape") { openSettings() }
@@ -216,7 +294,10 @@ struct PopupView: View {
                     .font(Brand.sans(11, .semibold)).foregroundStyle(Brand.textPrimary)
                 iconButton("power") { NSApp.terminate(nil) }
             }
-            Text("MCP 127.0.0.1:\(Store.queryServerPort)")
+            // `verbatim:` so the port isn't localized into "9,277".
+            Text(verbatim: Store.queryServerEnabled
+                 ? "MCP · 127.0.0.1:\(Store.queryServerPort) + stdio"
+                 : "MCP · stdio (burrow --mcp)")
                 .font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -276,7 +357,7 @@ private struct DiskBatteryRows: View {
             if let disk = s.disks.first {
                 bar(eyebrow: "Disk", glyph: "internaldrive", accent: disk.usedPercent >= 90 ? Brand.red : Brand.blue,
                     value: Fmt.gb((Double(disk.total) - Double(disk.used)) / 1_073_741_824) + " GB",
-                    detail: String(format: "%.0f%% used", disk.usedPercent),
+                    detail: String(format: NSLocalizedString("%.0f%% used", comment: ""), disk.usedPercent),
                     fraction: disk.usedPercent / 100,
                     barColor: disk.usedPercent >= 90 ? Brand.red : Brand.blue)
             }
@@ -284,7 +365,9 @@ private struct DiskBatteryRows: View {
                 bar(eyebrow: "Battery", glyph: "battery.100",
                     accent: b.percent <= 20 ? Brand.red : Brand.green,
                     value: String(format: "%.0f%%", b.percent),
-                    detail: b.status == "charging" ? "charging" : "\(b.timeLeft) left",
+                    detail: b.status == "charging"
+                        ? NSLocalizedString("charging", comment: "")
+                        : String(format: NSLocalizedString("%@ left", comment: ""), b.timeLeft),
                     fraction: b.percent / 100,
                     barColor: b.percent <= 20 ? Brand.red : Brand.green)
             }
@@ -314,11 +397,11 @@ private struct DiskBatteryRows: View {
 enum HealthRating {
     static func label(_ score: Int) -> String {
         switch score {
-        case 90...:   return "Excellent"
-        case 75..<90: return "Good"
-        case 60..<75: return "Fair"
-        case 40..<60: return "Poor"
-        default:      return "Critical"
+        case 90...:   return NSLocalizedString("Excellent", comment: "")
+        case 75..<90: return NSLocalizedString("Good", comment: "")
+        case 60..<75: return NSLocalizedString("Fair", comment: "")
+        case 40..<60: return NSLocalizedString("Poor", comment: "")
+        default:      return NSLocalizedString("Critical", comment: "")
         }
     }
     static func color(_ score: Int) -> Color {
@@ -371,9 +454,9 @@ final class HUDModel: ObservableObject {
     private func refreshCurrent() {
         snap = sampler.lastSnapshot
         if let when = sampler.lastSampleAt {
-            freshness = "\(Int(Date().timeIntervalSince(when)))s ago"
+            freshness = String(format: NSLocalizedString("%ds ago", comment: ""), Int(Date().timeIntervalSince(when)))
         } else {
-            freshness = "no samples yet"
+            freshness = NSLocalizedString("no samples yet", comment: "")
         }
     }
 

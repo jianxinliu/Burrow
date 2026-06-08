@@ -24,7 +24,7 @@ struct CleanView: View {
             if pendingRun != nil {
                 FullDiskAccessRequired(
                     accent: Tool.clean.accent,
-                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending(elevate: false) } },
+                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending(elevate: false); return true }; return false },
                     onRunAnyway: { runPending(elevate: true) },   // root bypasses TCC → no flood
                     onCancel: { pendingRun = nil })
             } else {
@@ -39,13 +39,25 @@ struct CleanView: View {
                 Rectangle().fill(Brand.hairline).frame(height: 1)
                 if isDone, mode == .real {
                     DoneBanner(accent: Tool.clean.accent, title: "Cleaned",
-                               detail: runner.summary.map { "Freed up to \($0.space) · \($0.items) items" })
+                               detail: runner.summary.map(cleanedDetail))
                 } else if mode == .dry, let s = runner.summary {
                     summaryBanner(s)
                 }
                 TaskReportView(groups: runner.groups, accent: Tool.clean.accent)
             }
         }
+    }
+
+    /// Post-run detail line. Prefers the real freed-space numbers Mole
+    /// prints after a live clean ("Free space change / now"), falling
+    /// back to the tracked-cleanup size when those aren't present.
+    private func cleanedDetail(_ s: TaskSummary) -> String {
+        var parts: [String] = []
+        if !s.freeChange.isEmpty { parts.append("Freed \(s.freeChange)") }
+        else if !s.space.isEmpty { parts.append("Cleaned \(s.space)") }
+        if !s.freeNow.isEmpty { parts.append("\(s.freeNow) free now") }
+        if !s.items.isEmpty { parts.append("\(s.items) items") }
+        return parts.isEmpty ? "Done" : parts.joined(separator: " · ")
     }
 
     private var statusBar: some View {
@@ -59,7 +71,7 @@ struct CleanView: View {
                         .font(Brand.mono(11)).foregroundStyle(Brand.red)
                 }.buttonStyle(.plain)
             }
-            if isDone {
+            if isDone || isFailed {
                 Button { runner.reset() } label: {
                     Label("Back", systemImage: "chevron.left")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
@@ -74,7 +86,8 @@ struct CleanView: View {
                 .font(Brand.mono(24, .semibold)).foregroundStyle(Tool.clean.accent)
             Text("to free").font(Brand.sans(13)).foregroundStyle(Brand.textSecondary)
             if !s.items.isEmpty {
-                Text("· \(s.items) items · \(s.categories) categories")
+                Text(String(format: NSLocalizedString("· %@ items · %@ categories", comment: ""),
+                            s.items, s.categories))
                     .font(Brand.mono(11)).foregroundStyle(Brand.textTertiary)
             }
             Spacer()
@@ -84,13 +97,14 @@ struct CleanView: View {
 
     private var isRunning: Bool { runner.phase == .running }
     private var isDone: Bool { if case .done = runner.phase { return true }; return false }
+    private var isFailed: Bool { if case .failed = runner.phase { return true }; return false }
 
     private var statusText: String {
         switch runner.phase {
-        case .running: return mode == .dry ? "Scanning your Mac…" : "Cleaning… don't quit."
-        case .done:    return runner.wasCancelled ? "Stopped."
-            : (mode == .dry ? "Preview — review, then clean for real." : "Done — caches cleared.")
-        case .failed(let m): return "Failed: \(m)"
+        case .running: return mode == .dry ? NSLocalizedString("Scanning your Mac…", comment: "") : NSLocalizedString("Cleaning… don't quit.", comment: "")
+        case .done:    return runner.wasCancelled ? NSLocalizedString("Stopped.", comment: "")
+            : (mode == .dry ? NSLocalizedString("Preview — review, then clean for real.", comment: "") : NSLocalizedString("Done — caches cleared.", comment: ""))
+        case .failed(let m): return String(format: NSLocalizedString("Failed: %@", comment: ""), m)
         case .idle:    return ""
         }
     }
@@ -118,13 +132,13 @@ struct CleanView: View {
     /// flood — no gate needed here.
     private func confirmReal() {
         let alert = NSAlert()
-        alert.messageText = "Clean caches for real?"
-        alert.informativeText = "Burrow will run `mo clean` with administrator rights. Cache files are removed permanently; Mole's whitelist and safety rules still apply."
+        alert.messageText = NSLocalizedString("Clean caches for real?", comment: "")
+        alert.informativeText = NSLocalizedString("Burrow will run `mo clean` with administrator rights. Cache files are removed permanently; Mole's whitelist and safety rules still apply.", comment: "")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Clean")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: NSLocalizedString("Clean", comment: ""))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         mode = .real
-        runner.run(["clean"], elevated: true, label: "Cleaning caches")
+        runner.run(["clean"], elevated: true, label: NSLocalizedString("Cleaning caches", comment: ""))
     }
 }

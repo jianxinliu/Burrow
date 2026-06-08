@@ -87,6 +87,41 @@ final class ExplainTests: XCTestCase {
         XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
     }
 
+    // MARK: - OpenAI-compatible (LM Studio) request shape
+
+    func testOpenAIEndpoint_normalizesBaseURL() {
+        // Whatever form the user types, we resolve to /v1/chat/completions.
+        XCTAssertEqual(OpenAICompatibleProvider.endpoint(from: "http://127.0.0.1:1234/v1")?.absoluteString,
+                       "http://127.0.0.1:1234/v1/chat/completions")
+        XCTAssertEqual(OpenAICompatibleProvider.endpoint(from: "http://127.0.0.1:1234/v1/")?.absoluteString,
+                       "http://127.0.0.1:1234/v1/chat/completions", "trailing slash tolerated")
+        XCTAssertEqual(OpenAICompatibleProvider.endpoint(from: "https://api.openai.com")?.absoluteString,
+                       "https://api.openai.com/v1/chat/completions", "bare host gets /v1 added")
+        XCTAssertEqual(OpenAICompatibleProvider.endpoint(from: "http://h/v1/chat/completions")?.absoluteString,
+                       "http://h/v1/chat/completions", "already-complete URL is left alone")
+    }
+
+    func testOpenAIRequest_postsChatCompletionsWithAuthWhenKeyed() throws {
+        let req = try OpenAICompatibleProvider.makeRequest(
+            baseURL: "http://127.0.0.1:1234/v1", model: "local-model",
+            apiKey: "sk-test", system: "sys", user: "usr")
+        XCTAssertEqual(req.httpMethod, "POST")
+        XCTAssertEqual(req.url?.path, "/v1/chat/completions")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer sk-test")
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(req.httpBody)) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "local-model")
+        let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+        XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
+    }
+
+    func testOpenAIRequest_omitsAuthHeaderWhenKeyBlank() throws {
+        // LM Studio and most local servers don't want an Authorization header.
+        let req = try OpenAICompatibleProvider.makeRequest(
+            baseURL: "http://127.0.0.1:1234/v1", model: "local-model",
+            apiKey: "", system: "sys", user: "usr")
+        XCTAssertNil(req.value(forHTTPHeaderField: "Authorization"))
+    }
+
     // MARK: - Engine end-to-end (fake provider)
 
     func testEngine_parsesProviderReplyIntoActionableResult() async throws {

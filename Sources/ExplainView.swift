@@ -69,7 +69,7 @@ struct ExplainView: View {
         loading = true; error = nil; result = nil
         Task {
             do {
-                let r = try await ExplainEngine().explain(db: db)
+                let r = try await ExplainEngine.fromSettings().explain(db: db)
                 await MainActor.run { self.result = r; self.loading = false }
             } catch {
                 await MainActor.run { self.error = error.localizedDescription; self.loading = false }

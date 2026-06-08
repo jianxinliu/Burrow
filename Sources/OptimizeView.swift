@@ -21,7 +21,7 @@ struct OptimizeView: View {
             if pendingRun != nil {
                 FullDiskAccessRequired(
                     accent: Tool.optimize.accent,
-                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending(elevate: false) } },
+                    onRecheck: { if Privacy.hasFullDiskAccess() { runPending(elevate: false); return true }; return false },
                     onRunAnyway: { runPending(elevate: true) },
                     onCancel: { pendingRun = nil })
             } else {
@@ -36,7 +36,7 @@ struct OptimizeView: View {
                 Rectangle().fill(Brand.hairline).frame(height: 1)
                 if isDone, !preview, !runner.wasCancelled {
                     DoneBanner(accent: Tool.optimize.accent, title: "Maintenance complete",
-                               detail: "\(runner.groups.count) areas refreshed")
+                               detail: String(format: NSLocalizedString("%d areas refreshed", comment: ""), runner.groups.count))
                 }
                 TaskReportView(groups: runner.groups, accent: Tool.optimize.accent)
             }
@@ -54,7 +54,7 @@ struct OptimizeView: View {
                         .font(Brand.mono(11)).foregroundStyle(Brand.red)
                 }.buttonStyle(.plain)
             }
-            if isDone {
+            if isDone || isFailed {
                 Button { runner.reset() } label: {
                     Label("Back", systemImage: "chevron.left")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
@@ -65,13 +65,14 @@ struct OptimizeView: View {
 
     private var isRunning: Bool { runner.phase == .running }
     private var isDone: Bool { if case .done = runner.phase { return true }; return false }
+    private var isFailed: Bool { if case .failed = runner.phase { return true }; return false }
 
     private var statusText: String {
         switch runner.phase {
-        case .running: return preview ? "Previewing maintenance…" : "Running maintenance…"
-        case .done:    return runner.wasCancelled ? "Stopped."
-            : (preview ? "Preview complete." : "Maintenance complete.")
-        case .failed(let m): return "Failed: \(m)"
+        case .running: return preview ? NSLocalizedString("Previewing maintenance…", comment: "") : NSLocalizedString("Running maintenance…", comment: "")
+        case .done:    return runner.wasCancelled ? NSLocalizedString("Stopped.", comment: "")
+            : (preview ? NSLocalizedString("Preview complete.", comment: "") : NSLocalizedString("Maintenance complete.", comment: ""))
+        case .failed(let m): return String(format: NSLocalizedString("Failed: %@", comment: ""), m)
         case .idle:    return ""
         }
     }

@@ -285,7 +285,7 @@ struct MoInteractiveView: View {
             if showFDAGate {
                 FullDiskAccessRequired(
                     accent: cfg.tool.accent,
-                    onRecheck: { if Privacy.hasFullDiskAccess() { startScan() } },
+                    onRecheck: { if Privacy.hasFullDiskAccess() { startScan(); return true }; return false },
                     onCancel: { showFDAGate = false })   // no "Scan with admin": root can't dodge TCC here
             } else {
                 ToolHero(tool: cfg.tool, title: cfg.tool.title, subtitle: cfg.tool.tagline) {

@@ -214,6 +214,80 @@ struct OllamaProvider: ExplainProvider {
     }
 }
 
+/// OpenAI-compatible chat-completions provider. Works with any server that
+/// speaks the OpenAI API — LM Studio, llama.cpp's server, Ollama's own /v1,
+/// OpenAI, OpenRouter, Groq, … `baseURL` is the API root (ending in /v1);
+/// we POST to `<baseURL>/chat/completions`. An empty key omits the
+/// Authorization header, which is what local servers like LM Studio want.
+struct OpenAICompatibleProvider: ExplainProvider {
+    var baseURL: String = Store.aiOpenAIBaseURL
+    var model: String = Store.aiOpenAIModel
+    var apiKey: String = Store.aiOpenAIKey
+    var session: URLSession = .shared
+
+    /// Resolve the chat-completions URL from a base that may or may not
+    /// already include `/v1` or a trailing slash. Pure → unit-tested.
+    static func endpoint(from base: String) -> URL? {
+        var s = base.trimmingCharacters(in: .whitespaces)
+        while s.hasSuffix("/") { s.removeLast() }
+        if s.hasSuffix("/chat/completions") { return URL(string: s) }
+        if s.hasSuffix("/v1") { return URL(string: s + "/chat/completions") }
+        return URL(string: s + "/v1/chat/completions")
+    }
+
+    /// Build the request. Pure + non-private so it's testable.
+    static func makeRequest(baseURL: String, model: String, apiKey: String,
+                            system: String, user: String) throws -> URLRequest {
+        guard let url = endpoint(from: baseURL) else {
+            throw ExplainError.providerUnavailable("Invalid API base URL: \(baseURL)")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = apiKey.trimmingCharacters(in: .whitespaces)
+        if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        // Hosted models can be slower to first token than a warm local one.
+        req.timeoutInterval = 60
+        let body: [String: Any] = [
+            "model": model,
+            "stream": false,
+            "temperature": 0.2,
+            "messages": [
+                ["role": "system", "content": system],
+                ["role": "user", "content": user],
+            ],
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return req
+    }
+
+    func complete(system: String, user: String) async throws -> String {
+        let req = try OpenAICompatibleProvider.makeRequest(
+            baseURL: baseURL, model: model, apiKey: apiKey, system: system, user: user)
+        let data: Data
+        let resp: URLResponse
+        do {
+            (data, resp) = try await session.data(for: req)
+        } catch {
+            throw ExplainError.providerUnavailable(
+                "Couldn't reach the API at \(baseURL). For LM Studio, load a model and start its server (Developer ▸ Start Server).")
+        }
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            var msg: String?
+            if let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = o["error"] as? [String: Any] { msg = err["message"] as? String }
+            throw ExplainError.providerUnavailable(msg ?? "The API returned HTTP \(http.statusCode).")
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = obj["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw ExplainError.badResponse
+        }
+        return content
+    }
+}
+
 // MARK: - Engine
 
 /// Orchestrates build → ask → parse. The provider is injectable so tests
@@ -223,6 +297,16 @@ struct ExplainEngine {
 
     init(provider: ExplainProvider = OllamaProvider()) {
         self.provider = provider
+    }
+
+    /// Build an engine from the user's current Explain settings — local
+    /// Ollama by default, or an OpenAI-compatible endpoint (LM Studio / API)
+    /// when they've switched the backend in Settings.
+    static func fromSettings() -> ExplainEngine {
+        switch Store.aiProvider {
+        case "openai": return ExplainEngine(provider: OpenAICompatibleProvider())
+        default:       return ExplainEngine(provider: OllamaProvider())
+        }
     }
 
     func explain(db: DB) async throws -> ExplainResult {

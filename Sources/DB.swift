@@ -61,39 +61,119 @@ final class DB {
     }
 
     /// Test-friendly initialiser. Pass a temp path from `XCTestCase.setUp`.
+    ///
+    /// A damaged or non-writable history file must never brick launch
+    /// (issue #5: "attempt to write a readonly database"). So opening is
+    /// staged from least to most destructive:
+    ///
+    ///   1. Open + prepare as-is. The happy path.
+    ///   2. On failure, try non-destructive repairs that PRESERVE history:
+    ///      drop the regenerable WAL/SHM sidecars (a stale or root-owned
+    ///      `-wal` is a classic readonly cause) and restore user write
+    ///      permission on our own file, then retry.
+    ///   3. Still unusable (corrupt, not-a-database, or unwritable file):
+    ///      quarantine it aside and recreate fresh.
+    ///
+    /// If even step 3 throws — e.g. the directory itself is read-only —
+    /// the error propagates to the caller, which surfaces it.
     init(at url: URL) throws {
-        let path = url.path
+        do {
+            try self.open(at: url)
+        } catch {
+            DB.removeSidecars(url)
+            DB.restoreWritePermission(url)
+            do {
+                try self.open(at: url)
+            } catch {
+                try DB.quarantine(url)
+                try self.open(at: url)
+            }
+        }
+    }
+
+    /// Open the SQLite file at `url`, configure pragmas, and ensure the
+    /// schema. Sets `self.handle` on success; on any failure closes the
+    /// handle, leaves it nil, and rethrows so a caller can recover.
+    private func open(at url: URL) throws {
         var h: OpaquePointer?
         // SQLITE_OPEN_FULLMUTEX lets us call into the same connection from
         // multiple threads without serializing ourselves. SQLite handles
         // the locking, and the cost is a per-call mutex grab — negligible
         // at our query rate.
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
-        if sqlite3_open_v2(path, &h, flags, nil) != SQLITE_OK {
+        if sqlite3_open_v2(url.path, &h, flags, nil) != SQLITE_OK {
             let msg = h.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
-            sqlite3_close(h)
+            if h != nil { sqlite3_close(h) }   // close only a real handle
+            self.handle = nil
             throw DBError.open(msg)
         }
         self.handle = h
 
-        // WAL mode lets readers run concurrently with the writer. Without
-        // it the sampler's 1-row insert blocks every chart query — very
-        // visible at 60s cadence with the popup open.
-        try exec("PRAGMA journal_mode=WAL;")
-        try exec("PRAGMA synchronous=NORMAL;")  // WAL + NORMAL is the canonical durability/perf tradeoff
-        try exec("PRAGMA foreign_keys=ON;")
+        do {
+            // WAL mode lets readers run concurrently with the writer.
+            // Without it the sampler's 1-row insert blocks every chart
+            // query — very visible at 60s cadence with the popup open.
+            try exec("PRAGMA journal_mode=WAL;")
+            try exec("PRAGMA synchronous=NORMAL;")  // WAL + NORMAL is the canonical durability/perf tradeoff
+            try exec("PRAGMA foreign_keys=ON;")
 
-        try exec("""
-            CREATE TABLE IF NOT EXISTS samples (
-                prefix TEXT NOT NULL,
-                ts     INTEGER NOT NULL,
-                json   TEXT NOT NULL,
-                PRIMARY KEY (prefix, ts)
-            );
-            """)
-        // Cross-prefix TTL prune needs a ts-only index; the PK above is
-        // (prefix, ts) so it can't satisfy `WHERE ts < ?` without scanning.
-        try exec("CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);")
+            try exec("""
+                CREATE TABLE IF NOT EXISTS samples (
+                    prefix TEXT NOT NULL,
+                    ts     INTEGER NOT NULL,
+                    json   TEXT NOT NULL,
+                    PRIMARY KEY (prefix, ts)
+                );
+                """)
+            // Cross-prefix TTL prune needs a ts-only index; the PK above is
+            // (prefix, ts) so it can't satisfy `WHERE ts < ?` without scanning.
+            try exec("CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);")
+        } catch {
+            // A pragma/schema write failed — the file is corrupt or
+            // readonly. Close so the next attempt opens cleanly.
+            sqlite3_close(self.handle)
+            self.handle = nil
+            throw error
+        }
+    }
+
+    // MARK: - Recovery (issue #5)
+
+    /// Delete the WAL/SHM sidecars. They're regenerated on next open, and
+    /// a stale or root-owned `-wal` is a common "readonly database" cause.
+    private static func removeSidecars(_ url: URL) {
+        for suffix in ["-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: url.path + suffix)
+        }
+    }
+
+    /// Ensure the owner can read+write our own db file, preserving the rest
+    /// of its mode (don't broaden group/other access). Best-effort: if we
+    /// don't own it (or it's immutable) this no-ops and recovery falls
+    /// through to quarantine.
+    private static func restoreWritePermission(_ url: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return }
+        let current = ((try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber)?.intValue ?? 0o600
+        try? fm.setAttributes([.posixPermissions: current | 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Move the unusable db **and its sidecars** aside so a fresh one can
+    /// be created in its place. The sidecars travel with the db (forensics)
+    /// and none are left at the original path to poison the new one. Picks
+    /// the first free `<name>.corrupt[-n]` so an earlier quarantine isn't
+    /// clobbered. Throws if the move fails (e.g. a read-only directory).
+    private static func quarantine(_ url: URL) throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { removeSidecars(url); return }
+        var dest = url.path + ".corrupt"
+        var n = 1
+        while fm.fileExists(atPath: dest) { dest = url.path + ".corrupt-\(n)"; n += 1 }
+        try fm.moveItem(atPath: url.path, toPath: dest)
+        for suffix in ["-wal", "-shm"] {
+            let side = url.path + suffix
+            if fm.fileExists(atPath: side) { try? fm.moveItem(atPath: side, toPath: dest + suffix) }
+        }
     }
 
     deinit {

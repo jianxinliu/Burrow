@@ -103,13 +103,13 @@ struct StatusView: View {
         if let t = s.thermal, t.cpuTemp > 0 {
             chip = (String(format: "%.0f°C", t.cpuTemp), Brand.orange)
         } else {
-            chip = ("\(s.cpu.coreCount) cores", Brand.textSecondary)
+            chip = (String(format: NSLocalizedString("%d cores", comment: ""), s.cpu.coreCount), Brand.textSecondary)
         }
         return MetricTile(
             eyebrow: "CPU", glyph: "cpu", accent: Brand.green,
             value: String(format: "%.1f", s.cpu.usage), unit: "%",
             chip: chip, values: model.cpuHist, chartStyle: .bars,
-            footnote: String(format: "load %.2f · %.2f · %.2f", s.cpu.load1, s.cpu.load5, s.cpu.load15))
+            footnote: String(format: NSLocalizedString("load %.2f · %.2f · %.2f", comment: ""), s.cpu.load1, s.cpu.load5, s.cpu.load15))
     }
 
     private func memTile(_ s: MoleStatus) -> MetricTile {
@@ -122,7 +122,7 @@ struct StatusView: View {
             eyebrow: "Memory", glyph: "memorychip", accent: Brand.amber,
             value: String(format: "%.0f", m.usedPercent), unit: "%",
             chip: (label, color), values: model.memHist, chartStyle: .area,
-            footnote: String(format: "%.1f / %.1f GB · swap %.1f GB",
+            footnote: String(format: NSLocalizedString("%.1f / %.1f GB · swap %.1f GB", comment: ""),
                              used, total, Double(m.swapUsed) / 1_073_741_824))
     }
 
@@ -242,11 +242,12 @@ struct HealthCard: View {
     private var message: String {
         let m = s.healthScoreMsg
         if let r = m.range(of: ": ") { return String(m[r.upperBound...]) }
-        return m.isEmpty ? "All checks passed" : m
+        return m.isEmpty ? NSLocalizedString("All checks passed", comment: "") : m
     }
     private var uptimeLine: String {
         let boot = Date().addingTimeInterval(-Double(s.uptimeSeconds))
-        return "up \(Fmt.uptime(s.uptimeSeconds)) · since \(Fmt.day(boot))"
+        return String(format: NSLocalizedString("up %@ · since %@", comment: ""),
+                      Fmt.uptime(s.uptimeSeconds), Fmt.day(boot))
     }
 }
 
@@ -292,7 +293,7 @@ struct DiskCard: View {
                 }
                 ProgressBar(fraction: pct / 100, color: barColor)
                 Spacer(minLength: 2)
-                Text(String(format: "%.0f%% used · R %.0f · W %.0f MB/s",
+                Text(String(format: NSLocalizedString("%.0f%% used · R %.0f · W %.0f MB/s", comment: ""),
                             pct, s.diskIO.readRate, s.diskIO.writeRate))
                     .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary).lineLimit(1)
             }
@@ -318,11 +319,12 @@ struct BatteryCard: View {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(String(format: "%.0f", b.percent)).font(Brand.mono(26, .semibold)).foregroundStyle(Brand.textPrimary)
                         Text("%").font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
-                        Text(b.status).font(Brand.sans(11)).foregroundStyle(Brand.textTertiary).padding(.leading, 4)
+                    Text(NSLocalizedString(b.status, comment: "")).font(Brand.sans(11)).foregroundStyle(Brand.textTertiary).padding(.leading, 4)
                     }
                     ProgressBar(fraction: b.percent / 100, color: color(b))
                     Spacer(minLength: 2)
-                    Text("\(b.timeLeft) left · \(b.cycleCount) cyc · \(b.capacity)% cap")
+                    Text(String(format: NSLocalizedString("%@ left · %d cyc · %d%% cap", comment: ""),
+                                b.timeLeft, b.cycleCount, b.capacity))
                         .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary).lineLimit(1)
                 }
             } else {
@@ -381,7 +383,7 @@ struct ProcessCard: View {
 
     private func header(count: Int) -> some View {
         HStack(spacing: 10) {
-            sortButton("NAME (\(count))", .name)
+            sortButton(String(format: NSLocalizedString("NAME (%d)", comment: ""), count), .name)
             Spacer(minLength: 8)
             sortButton("PID", .pid).frame(width: 54, alignment: .trailing)
             sortButton("CPU", .cpu).frame(width: 92, alignment: .trailing)
@@ -394,7 +396,7 @@ struct ProcessCard: View {
     private func sortButton(_ title: String, _ key: ProcSort) -> some View {
         Button { model.setSort(key) } label: {
             HStack(spacing: 3) {
-                Text(title).font(Brand.mono(10, .bold)).tracking(0.6)
+                Text(NSLocalizedString(title, comment: "")).font(Brand.mono(10, .bold)).tracking(0.6)
                 if model.sortKey == key {
                     Image(systemName: model.sortAsc ? "chevron.up" : "chevron.down")
                         .font(.system(size: 7, weight: .bold))

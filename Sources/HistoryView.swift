@@ -228,9 +228,9 @@ struct HistoryView: View {
             rangePills
             if loading { ProgressView().controlSize(.small) }
             Spacer()
-            Text("\(snapshot.rowCount) samples").font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
+            Text(String(format: NSLocalizedString("%d samples", comment: ""), snapshot.rowCount)).font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
             if let s = snapshot.staleSeconds {
-                Text("· latest \(s)s ago").font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
+                Text(String(format: NSLocalizedString("· latest %ds ago", comment: ""), s)).font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
             }
             Button { reload() } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
@@ -267,8 +267,8 @@ struct HistoryView: View {
         return GlassCard {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(title.uppercased()).font(Brand.mono(10, .bold)).tracking(0.7).foregroundStyle(series.first?.color ?? Brand.textSecondary)
-                    Text(subtitle).font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
+                    Text(NSLocalizedString(title, comment: "").uppercased()).font(Brand.mono(10, .bold)).tracking(0.7).foregroundStyle(series.first?.color ?? Brand.textSecondary)
+                    Text(NSLocalizedString(subtitle, comment: "")).font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
                 }
                 if allEmpty {
                     Text("No samples in this window")
@@ -309,7 +309,7 @@ struct HistoryView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("TOP PROCESSES").font(Brand.mono(10, .bold)).tracking(0.7).foregroundStyle(Brand.textSecondary)
+                    Text(NSLocalizedString("Top processes", comment: "").uppercased()).font(Brand.mono(10, .bold)).tracking(0.7).foregroundStyle(Brand.textSecondary)
                     Text("peak across window").font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
                 }
                 if snapshot.topProcesses.isEmpty {

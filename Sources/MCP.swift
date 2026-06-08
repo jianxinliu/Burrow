@@ -139,7 +139,7 @@ final class MCPServer {
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": [
                     "name": "burrow",
-                    "version": "0.2.0",
+                    "version": "0.3.0",
                 ],
             ],
         ]
@@ -251,11 +251,124 @@ struct ToolCatalog {
                 ] as [String: Any],
             ],
             [
+                "name": "burrow_process_usage",
+                "description": "Rank processes over the last `minutes` (default 60) by a chosen `metric`: cpu_time (default; cumulative CPU-seconds = the closest answer to 'what used my computer most'), peak_cpu (highest single-sample CPU%), avg_cpu (mean CPU% while present), or peak_mem (highest memory%). Returns the window it actually used (start_ts/end_ts/sample_count) so the answer isn't ambiguous. NOTE: derived from periodic samples, so cpu_time is an estimate, not the kernel's exact accounting.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "minutes": ["type": "integer", "minimum": 1],
+                        "metric": ["type": "string", "enum": ["cpu_time", "peak_cpu", "avg_cpu", "peak_mem"]],
+                        "limit": ["type": "integer", "minimum": 1, "maximum": 100],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
                 "name": "burrow_info",
                 "description": "Burrow's own state: list of prefixes with row counts + staleness, current retention setting. Use when diagnosing whether data is flowing.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [String: Any](),
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_cleanup_history",
+                "description": "Mole's itemised record of past cleanup activity: each clean/optimize/purge/uninstall session with when it ran, how many items, bytes freed, and an actions breakdown (removed/trashed/skipped/failed). `limit` caps how many recent sessions (default 20, max 200). This is Mole's CLEANUP log — distinct from burrow_history, which is the system-metrics time series. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "limit": ["type": "integer", "minimum": 1, "maximum": 200],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_deleted_files",
+                "description": "The exact filesystem paths Mole has removed or trashed, newest first, from Mole's deletion log. Each entry has a timestamp, action (trash/remove), category, status (ok/failed), and the absolute path. `limit` caps how many recent paths (default 100, max 5000). Answers 'what exactly did the last cleanup delete?'. Read-only — this reports history, it does not delete anything.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "limit": ["type": "integer", "minimum": 1, "maximum": 5000],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_analyze",
+                "description": "Disk-usage breakdown of a directory via `mo analyze --json` — a size-ranked tree, the data behind Burrow's treemap. Read-only (no deletion). `path` defaults to the home folder. Use to answer 'what's taking up space?'.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "path": ["type": "string", "description": "Absolute directory to analyze. Defaults to the home folder."],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_list_apps",
+                "description": "Installed applications and the exact names `burrow_uninstall` accepts (from `mo uninstall --list`). Read-only. Call this first to get the canonical app name before uninstalling.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [String: Any](),
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_clean",
+                "description": "Clean caches, logs, temp files and leftovers via `mo clean`. SAFE BY DEFAULT: with no `confirm` (or confirm:false) it runs `--dry-run` and only PREVIEWS what would be freed — nothing is deleted. A real deletion needs confirm:true AND the user's opt-in ('Let agents run cleanups' in Burrow Settings); without the opt-in, confirm:true is refused and reported as blocked. Real runs are not elevated (user-level caches only).",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "confirm": ["type": "boolean", "description": "true = actually delete (requires the Settings opt-in). Omit/false = dry-run preview only."],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_optimize",
+                "description": "Refresh system caches/services and run safe maintenance via `mo optimize`. SAFE BY DEFAULT: without confirm:true it runs `--dry-run` (preview only). A real run needs confirm:true AND the user's Settings opt-in, else it's reported as blocked.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "confirm": ["type": "boolean", "description": "true = actually run (requires the Settings opt-in). Omit/false = dry-run preview only."],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_uninstall",
+                "description": "Uninstall one or more apps and their leftover files via `mo uninstall <app>…`. Get exact names from burrow_list_apps. SAFE BY DEFAULT: without confirm:true it runs `--dry-run` (preview only). A real uninstall needs confirm:true AND the user's Settings opt-in, else it's reported as blocked. Removed files go to the Trash (recoverable) unless `permanent` is true.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "apps": ["type": "array", "items": ["type": "string"], "description": "App names exactly as burrow_list_apps reports them."],
+                        "confirm": ["type": "boolean", "description": "true = actually uninstall (requires the Settings opt-in). Omit/false = dry-run preview only."],
+                        "permanent": ["type": "boolean", "description": "true = bypass the Trash and delete immediately. Default false (recoverable)."],
+                    ],
+                    "required": ["apps"],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_purge",
+                "description": "Find old project build artifacts (node_modules, target/, build/, …) via `mo purge`. PREVIEW over MCP: this returns the `--dry-run` list of what would be purged. The real purge is an interactive selection flow — run it from the Burrow app. (confirm:true returns the preview plus that note.)",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "confirm": ["type": "boolean", "description": "Reserved. Real purge is interactive (use the app); any value still returns the preview."],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_installer",
+                "description": "Find leftover installer files (.dmg, .pkg, .iso, .xip, .zip) via `mo installer`. PREVIEW over MCP: returns the `--dry-run` list of what would be removed. The real removal is an interactive selection flow — run it from the Burrow app. (confirm:true returns the preview plus that note.)",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "confirm": ["type": "boolean", "description": "Reserved. Real installer cleanup is interactive (use the app); any value still returns the preview."],
+                    ],
                     "additionalProperties": false,
                 ] as [String: Any],
             ],
@@ -270,8 +383,30 @@ struct ToolCatalog {
             return try self.callHistory(arguments)
         case "burrow_top_processes":
             return try self.callTopProcesses(arguments)
+        case "burrow_process_usage":
+            return try self.callProcessUsage(arguments)
         case "burrow_info":
             return self.callInfo()
+        case "burrow_cleanup_history":
+            return self.callCleanupHistory(arguments)
+        case "burrow_deleted_files":
+            return self.callDeletedFiles(arguments)
+        case "burrow_analyze":
+            return self.callAnalyze(arguments)
+        case "burrow_list_apps":
+            return self.callListApps()
+        case "burrow_clean":
+            return self.runCleanup(command: "clean", baseArgs: ["clean"],
+                                   confirm: (arguments["confirm"] as? Bool) ?? false)
+        case "burrow_optimize":
+            return self.runCleanup(command: "optimize", baseArgs: ["optimize"],
+                                   confirm: (arguments["confirm"] as? Bool) ?? false)
+        case "burrow_uninstall":
+            return try self.callUninstall(arguments)
+        case "burrow_purge":
+            return self.callInteractivePreview(command: "purge", arguments: arguments)
+        case "burrow_installer":
+            return self.callInteractivePreview(command: "installer", arguments: arguments)
         default:
             throw MCPToolError.unknown(name)
         }
@@ -337,6 +472,75 @@ struct ToolCatalog {
         return "{\"window_minutes\":\(minutes),\"processes\":[\(pieces.joined(separator: ","))]}"
     }
 
+    /// Semantic process ranking. Where `burrow_top_processes` always ranks
+    /// by peak CPU — which crowns a one-second spike — this lets the agent
+    /// pick the metric that matches the question, and echoes the window it
+    /// used so "this week" can't be silently reinterpreted.
+    private func callProcessUsage(_ args: [String: Any]) throws -> String {
+        let minutes = (args["minutes"] as? Int) ?? 60
+        // Upper bound guards against Int overflow in `minutes * 60` below
+        // (~1.9 years is far past any useful window).
+        guard minutes > 0, minutes <= 1_000_000 else {
+            throw MCPToolError.badArguments("minutes must be between 1 and 1000000")
+        }
+        let limit = max(1, min((args["limit"] as? Int) ?? 10, 100))
+        let metric = (args["metric"] as? String) ?? "cpu_time"
+        let allowed = ["cpu_time", "peak_cpu", "avg_cpu", "peak_mem"]
+        guard allowed.contains(metric) else {
+            throw MCPToolError.badArguments("metric must be one of: \(allowed.joined(separator: ", "))")
+        }
+
+        let now = Int(Date().timeIntervalSince1970)
+        let since = now - minutes * 60
+        let rows = self.db.findRangeSampled(prefix: Sampler.snapshotPrefix,
+                                            since: since, until: now, maxPoints: 720)
+        // findRangeSampled down-samples wide windows, so each returned row
+        // stands for MORE than one sample period. Estimate CPU-time against
+        // the effective spacing of the rows we actually got — using the raw
+        // sampler cadence would badly under-count over long windows.
+        let interval: Double = rows.count > 1
+            ? Double(max(1, rows[rows.count - 1].ts - rows[0].ts)) / Double(rows.count - 1)
+            : Double(Store.sampleIntervalSeconds)
+
+        struct Agg { var peakCPU = 0.0; var sumCPU = 0.0; var samples = 0; var peakMem = 0.0 }
+        var agg: [String: Agg] = [:]
+        let dec = JSONDecoder()
+        for r in rows {
+            guard let data = r.json.data(using: .utf8),
+                  let s = try? dec.decode(MoleStatus.self, from: data) else { continue }
+            for p in (s.topProcesses ?? []) {
+                var a = agg[p.name] ?? Agg()
+                a.peakCPU = max(a.peakCPU, p.cpu)
+                a.sumCPU += p.cpu
+                a.samples += 1
+                a.peakMem = max(a.peakMem, p.memory)
+                agg[p.name] = a
+            }
+        }
+
+        func score(_ a: Agg) -> Double {
+            switch metric {
+            case "peak_cpu": return a.peakCPU
+            case "avg_cpu":  return a.samples > 0 ? a.sumCPU / Double(a.samples) : 0
+            case "peak_mem": return a.peakMem
+            default:         return (a.sumCPU / 100.0) * interval   // est. CPU-seconds
+            }
+        }
+
+        let ranked = agg.sorted { score($0.value) > score($1.value) }.prefix(limit)
+        var pieces: [String] = []
+        for (name, a) in ranked {
+            let escaped = name.replacingOccurrences(of: "\\", with: "\\\\")
+                              .replacingOccurrences(of: "\"", with: "\\\"")
+            let avg = a.samples > 0 ? a.sumCPU / Double(a.samples) : 0
+            let cpuTime = (a.sumCPU / 100.0) * interval
+            pieces.append("{\"name\":\"\(escaped)\",\"peak_cpu\":\(a.peakCPU),\"avg_cpu\":\(avg),\"est_cpu_time_seconds\":\(cpuTime),\"peak_mem\":\(a.peakMem),\"samples\":\(a.samples)}")
+        }
+        let startTS = rows.first?.ts ?? since
+        let endTS = rows.last?.ts ?? now
+        return "{\"metric\":\"\(metric)\",\"window_minutes\":\(minutes),\"start_ts\":\(startTS),\"end_ts\":\(endTS),\"sample_count\":\(rows.count),\"interval_seconds\":\(Int(interval.rounded())),\"processes\":[\(pieces.joined(separator: ","))]}"
+    }
+
     private func callInfo() -> String {
         let now = Int(Date().timeIntervalSince1970)
         let prefixes = self.db.listPrefixes()
@@ -349,5 +553,228 @@ struct ToolCatalog {
             }
         }
         return "{\"now\":\(now),\"retention_days\":\(Store.retentionDays),\"sample_interval_seconds\":\(Store.sampleIntervalSeconds),\"readers\":[\(pieces.joined(separator: ","))]}"
+    }
+
+    /// Itemised cleanup history (issue #2). Passes through `mo history
+    /// --json` — already the exact shape an agent wants (sessions[] with
+    /// command/time/items/size/actions). We don't reshape it so the
+    /// contract tracks Mole's, not ours. Degrades to a valid empty/error
+    /// object when `mo` isn't installed so the tool never throws.
+    private func callCleanupHistory(_ args: [String: Any]) -> String {
+        let limit = max(1, min((args["limit"] as? Int) ?? 20, 200))
+        guard let res = try? MoleCLI.run(args: ["history", "--json", "--limit", "\(limit)"],
+                                         timeout: 15),
+              res.exitCode == 0 else {
+            return "{\"error\":\"mo history unavailable\",\"sessions\":[]}"
+        }
+        let out = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.isEmpty ? "{\"sessions\":[]}" : out
+    }
+
+    /// Exact deleted file paths (issue #2). Reads Mole's append-only
+    /// deletion log and returns the most recent `limit` rows, newest
+    /// first. Read-only: this surfaces what Mole already deleted; it
+    /// never removes anything. Graceful when the log is absent.
+    private func callDeletedFiles(_ args: [String: Any]) -> String {
+        let limit = max(1, min((args["limit"] as? Int) ?? 100, 5000))
+        let logPath = Self.deletionsLogPath()
+        let text = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? ""
+        let files = Self.parseDeletionLog(text, limit: limit)
+        let out: [String: Any] = ["count": files.count, "log": logPath, "files": files]
+        if let data = try? JSONSerialization.data(withJSONObject: out,
+                                                  options: [.withoutEscapingSlashes]),
+           let s = String(data: data, encoding: .utf8) {
+            return s
+        }
+        return "{\"count\":0,\"files\":[]}"
+    }
+
+    /// Parse Mole's tab-separated deletion log into newest-first entries.
+    /// Each line is `ts \t action \t category \t status \t path`; the path
+    /// is the remainder so an (unlikely) tab inside it survives. Malformed
+    /// lines are skipped. Pure → unit-tested.
+    static func parseDeletionLog(_ text: String, limit: Int) -> [[String: Any]] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        var entries: [[String: Any]] = []
+        for line in lines.suffix(max(1, limit)) {
+            let parts = line.split(separator: "\t", maxSplits: 4,
+                                   omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 5 else { continue }
+            entries.append([
+                "ts": parts[0], "action": parts[1], "category": parts[2],
+                "status": parts[3], "path": parts[4],
+            ])
+        }
+        return entries.reversed()
+    }
+
+    /// Resolve Mole's deletion-log path from `mo history --json` (the
+    /// source of truth), falling back to the standard location when `mo`
+    /// isn't reachable.
+    private static func deletionsLogPath() -> String {
+        let fallback = (NSHomeDirectory() as NSString)
+            .appendingPathComponent("Library/Logs/mole/deletions.log")
+        guard let res = try? MoleCLI.run(args: ["history", "--json"], timeout: 10),
+              res.exitCode == 0,
+              let data = res.stdout.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let logs = obj["logs"] as? [String: Any],
+              let p = logs["deletions"] as? String, !p.isEmpty else {
+            return fallback
+        }
+        return p
+    }
+
+    // MARK: - Action tools (driving mo's real commands)
+    //
+    // The read tools above never touch the disk. These do — so destructive
+    // runs pass through a two-key gate: the per-call `confirm:true` AND the
+    // user's Settings opt-in (`Store.mcpActionsEnabled`). With neither, a
+    // tool only ever runs `--dry-run` and PREVIEWS. We always drive `mo`
+    // itself — never reimplement its cleanup logic.
+
+    /// Pure gate: a real (deleting) action runs only when the per-call
+    /// confirm AND the user's opt-in are both true. Unit-tested.
+    static func realActionAllowed(confirm: Bool, optedIn: Bool) -> Bool {
+        confirm && optedIn
+    }
+
+    /// `mo analyze --json <path>` — read-only disk-usage tree. Passes
+    /// through Mole's JSON. Degrades to an error object when `mo` is
+    /// missing or analysis fails.
+    private func callAnalyze(_ args: [String: Any]) -> String {
+        let path = (args["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        // 300 s like DiskScanner — analyze on a home dir can take a while.
+        let res = Self.runMo(["analyze", "--json", path], timeout: 300)
+        guard res.exitCode == 0 else {
+            return Self.jsonString(["error": "mo analyze failed",
+                                    "path": path,
+                                    "stderr": Self.stripANSI(res.stderr)])
+        }
+        let out = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.isEmpty ? Self.jsonString(["error": "empty analyze output", "path": path]) : out
+    }
+
+    /// `mo uninstall --list` — installed apps + the exact names uninstall
+    /// accepts. Read-only.
+    private func callListApps() -> String {
+        let res = Self.runMo(["uninstall", "--list"], timeout: 60)
+        guard res.exitCode == 0 else {
+            return Self.jsonString(["error": "mo uninstall --list failed",
+                                    "exit_code": Int(res.exitCode),
+                                    "stderr": Self.stripANSI(res.stderr),
+                                    "apps": []])
+        }
+        let out = Self.stripANSI(res.stdout).trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.isEmpty ? "{\"apps\":[]}" : out
+    }
+
+    /// Shared driver for `clean` / `optimize`. Dry-run preview unless the
+    /// gate opens; on a blocked real request, says why instead of running.
+    private func runCleanup(command: String, baseArgs: [String], confirm: Bool) -> String {
+        if !confirm {
+            let res = Self.runMo(baseArgs + ["--dry-run"], timeout: 180)
+            return Self.actionResult(command: command, dryRun: true, ran: false, res: res)
+        }
+        guard Self.realActionAllowed(confirm: confirm, optedIn: Store.mcpActionsEnabled) else {
+            return Self.blockedResult(command: command)
+        }
+        // Not elevated: an MCP server can't safely field a sudo/Touch ID
+        // dialog, so a real run cleans what the user already owns and skips
+        // anything needing admin. The Burrow app does the elevated clean.
+        let res = Self.runMo(baseArgs, timeout: 600)
+        return Self.actionResult(command: command, dryRun: false, ran: res.exitCode == 0, res: res)
+    }
+
+    /// `mo uninstall [--permanent] <app>…`. Needs at least one app name.
+    private func callUninstall(_ args: [String: Any]) throws -> String {
+        let apps = (args["apps"] as? [String])?
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty } ?? []
+        guard !apps.isEmpty else {
+            throw MCPToolError.badArguments("uninstall needs `apps`: one or more app names (see burrow_list_apps)")
+        }
+        let confirm = (args["confirm"] as? Bool) ?? false
+        let permanent = (args["permanent"] as? Bool) ?? false
+        if !confirm {
+            let res = Self.runMo(["uninstall", "--dry-run"] + apps, timeout: 180)
+            return Self.actionResult(command: "uninstall", dryRun: true, ran: false, res: res,
+                                     extra: ["apps": apps])
+        }
+        guard Self.realActionAllowed(confirm: confirm, optedIn: Store.mcpActionsEnabled) else {
+            return Self.blockedResult(command: "uninstall", extra: ["apps": apps])
+        }
+        var moArgs = ["uninstall"]
+        if permanent { moArgs.append("--permanent") }
+        moArgs += apps
+        let res = Self.runMo(moArgs, timeout: 600)
+        return Self.actionResult(command: "uninstall", dryRun: false, ran: res.exitCode == 0, res: res,
+                                 extra: ["apps": apps, "permanent": permanent])
+    }
+
+    /// `purge` / `installer` preview. Their REAL run is an interactive
+    /// checklist whose driver isn't wired into the MCP path — so we return
+    /// the `--dry-run` list, and on confirm:true add a note pointing at the
+    /// app. Honest and forward-compatible.
+    private func callInteractivePreview(command: String, arguments: [String: Any]) -> String {
+        let confirm = (arguments["confirm"] as? Bool) ?? false
+        let res = Self.runMo([command, "--dry-run"], timeout: 180)
+        let preview = Self.stripANSI(res.stdout.isEmpty ? res.stderr : res.stdout)
+        var obj: [String: Any] = [
+            "command": command, "dry_run": true, "ran": false,
+            "exit_code": Int(res.exitCode), "output": preview,
+        ]
+        if confirm {
+            obj["interactive_only"] = true
+            obj["note"] = "Real `mo \(command)` is an interactive selection flow — run it from the Burrow app. This is the preview."
+        }
+        return Self.jsonString(obj)
+    }
+
+    // MARK: Action helpers
+
+    /// Run `mo` with the given args, never throwing — a missing binary
+    /// becomes exit code 127 so callers can degrade gracefully.
+    private static func runMo(_ args: [String], timeout: TimeInterval) -> MoleCLI.Result {
+        (try? MoleCLI.run(args: args, timeout: timeout))
+            ?? MoleCLI.Result(stdout: "", stderr: "mo not found", exitCode: 127)
+    }
+
+    private static func actionResult(command: String, dryRun: Bool, ran: Bool,
+                                     res: MoleCLI.Result, extra: [String: Any] = [:]) -> String {
+        var obj: [String: Any] = [
+            "command": command,
+            "dry_run": dryRun,
+            "ran": ran,
+            "exit_code": Int(res.exitCode),
+            "output": stripANSI(res.stdout.isEmpty ? res.stderr : res.stdout),
+        ]
+        for (k, v) in extra { obj[k] = v }
+        return jsonString(obj)
+    }
+
+    private static func blockedResult(command: String, extra: [String: Any] = [:]) -> String {
+        var obj: [String: Any] = [
+            "command": command, "ran": false, "blocked": true,
+            "reason": "Real cleanups are off. Turn on 'Let agents run cleanups for real' in Burrow ▸ Settings, then retry with confirm:true. (A dry-run preview works without it.)",
+        ]
+        for (k, v) in extra { obj[k] = v }
+        return jsonString(obj)
+    }
+
+    /// Strip ANSI/VT100 escape sequences so mo's TUI coloring doesn't leak
+    /// into the JSON text payload.
+    static func stripANSI(_ s: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: "\\x1B\\[[0-9;?]*[ -/]*[@-~]") else { return s }
+        let range = NSRange(s.startIndex..., in: s)
+        return re.stringByReplacingMatches(in: s, range: range, withTemplate: "")
+    }
+
+    private static func jsonString(_ obj: [String: Any]) -> String {
+        if let d = try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes]),
+           let s = String(data: d, encoding: .utf8) {
+            return s
+        }
+        return "{\"error\":\"encode failed\"}"
     }
 }
