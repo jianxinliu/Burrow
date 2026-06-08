@@ -11,6 +11,7 @@
 
 import SwiftUI
 import AppKit
+import LocalAuthentication
 
 struct SettingsView: View {
     @State private var sampleIntervalSeconds: Int = Store.sampleIntervalSeconds
@@ -23,6 +24,10 @@ struct SettingsView: View {
     @State private var moleVersion: String = "—"
     @State private var moleUpdating = false
     @State private var copiedConfig = false
+    @State private var touchIDStatus = "—"
+    @State private var touchIDEnabled = false
+    @State private var touchIDBusy = false
+    @State private var touchIDAvailable = false
 
     /// Drop-in MCP config for Claude Code / Cursor / Codex / Cline — they
     /// all share the same `{command, args}` stdio shape, so one snippet
@@ -66,6 +71,18 @@ struct SettingsView: View {
                             PillButton(title: moleUpdating ? "Updating…" : "Update Mole", filled: false) { updateMole() }
                         }
                         footnote("Runs `mo update` to update the Mole CLI engine Burrow drives. This is separate from Burrow's own app updates. If it needs a password or a confirmation it can't show here, run `mo update` in a terminal instead.")
+                    }
+
+                    section("Touch ID for sudo", "touchid") {
+                        infoRow("Status", touchIDStatus)
+                        if touchIDAvailable {
+                            HStack {
+                                Spacer()
+                                if touchIDBusy { ProgressView().controlSize(.small).padding(.trailing, 4) }
+                                PillButton(title: touchIDEnabled ? "Disable" : "Enable", filled: false) { toggleTouchID() }
+                            }
+                        }
+                        footnote("Lets `sudo` and admin prompts accept your fingerprint instead of a password, where macOS supports it. Configured via `mo touchid`; turning it on or off needs your password once.")
                     }
 
                     section("History retention", "calendar") {
@@ -123,7 +140,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity)
             }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { refreshStatusLabels(); loadMoleVersion() }
+        .onAppear { refreshStatusLabels(); loadMoleVersion(); loadTouchIDStatus() }
     }
 
     // MARK: - Mole engine
@@ -152,6 +169,55 @@ struct SettingsView: View {
                     : (res?.stderr.isEmpty == false ? String(res!.stderr.prefix(300))
                                                     : "`mo update` exited non-zero. Try running it in a terminal.")
                 alert.runModal()
+            }
+        }
+    }
+
+    // MARK: - Touch ID for sudo
+
+    /// Whether this Mac actually has a Touch ID sensor. `mo touchid status`
+    /// only reports configured-vs-not (never hardware presence), so we ask
+    /// LocalAuthentication directly — biometryType is .touchID only on Macs
+    /// with the sensor (set after a canEvaluatePolicy probe, even if no
+    /// finger is enrolled yet).
+    private func touchIDHardwarePresent() -> Bool {
+        let ctx = LAContext()
+        var err: NSError?
+        _ = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err)
+        return ctx.biometryType == .touchID
+    }
+
+    private func loadTouchIDStatus() {
+        let available = touchIDHardwarePresent()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = try? MoleCLI.run(args: ["touchid", "status"], timeout: 15)
+            // Strip ANSI colour codes Mole wraps the status line in before matching.
+            let out = CommandRunner.stripAnsi(res?.stdout ?? "").lowercased()
+            let enabled = out.contains("is enabled")
+            DispatchQueue.main.async {
+                touchIDAvailable = available
+                touchIDEnabled = enabled
+                touchIDStatus = !available ? "Not available on this Mac"
+                    : (out.isEmpty ? "Unknown" : (enabled ? "Enabled" : "Disabled"))
+            }
+        }
+    }
+
+    private func toggleTouchID() {
+        guard !touchIDBusy else { return }
+        touchIDBusy = true
+        let cmd = touchIDEnabled ? "disable" : "enable"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let code = MoleCLI.runElevated(args: ["touchid", cmd])
+            DispatchQueue.main.async {
+                touchIDBusy = false
+                loadTouchIDStatus()
+                if code != 0 {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn't update Touch ID for sudo"
+                    alert.informativeText = "`mo touchid \(cmd)` didn't complete (the password prompt may have been cancelled). You can also run it in a terminal."
+                    alert.runModal()
+                }
             }
         }
     }

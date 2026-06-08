@@ -147,4 +147,28 @@ enum MoleCLI {
             exitCode: task.terminationStatus
         )
     }
+
+    /// Run `mo <args>` ONCE with administrator rights via the macOS auth
+    /// dialog (which accepts Touch ID where the system supports it). Blocking
+    /// — call off the main thread. For one-shot privileged config like
+    /// `touchid enable/disable`, not for streamed jobs (CommandRunner does those).
+    static func runElevated(args: [String]) -> Int32 {
+        guard let mo = findExecutable() else { return 127 }
+        // Quote each argument for the shell, then escape the whole command for
+        // embedding in an AppleScript string literal. Belt-and-suspenders since
+        // today's callers pass only literal subcommands, but keeps a stray space
+        // or quote in a path from breaking (or injecting into) the script.
+        func shQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let raw = ([mo] + args).map(shQuote).joined(separator: " ")
+        let inner = raw.replacingOccurrences(of: "\\", with: "\\\\")
+                       .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "do shell script \"\(inner)\" with administrator privileges"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+        do { try task.run(); task.waitUntilExit(); return task.terminationStatus }
+        catch { return 1 }
+    }
 }
