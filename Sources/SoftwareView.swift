@@ -14,7 +14,6 @@
 
 import SwiftUI
 import AppKit
-import CoreServices
 
 struct InstalledApp: Identifiable {
     let id: String
@@ -294,13 +293,12 @@ final class SoftwareModel: ObservableObject {
         }
     }
 
-    /// Best-effort "last used": Spotlight's kMDItemLastUsedDate when it's
-    /// available, else the bundle's access/modification date.
+    /// Best-effort "last used" from the filesystem (access date, falling back to
+    /// modification date). Deliberately NOT Spotlight (`kMDItemLastUsedDate`):
+    /// querying metadata for every installed app woke `mds`/`mdworker` and spiked
+    /// CPU/energy. Filesystem dates are close enough for the Recent sort and cost
+    /// nothing — no metadata server, no indexing.
     private static func lastUsedDate(_ path: String) -> Date? {
-        if let item = MDItemCreate(nil, path as CFString),
-           let v = MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date {
-            return v
-        }
         let url = URL(fileURLWithPath: path)
         if let vals = try? url.resourceValues(forKeys: [.contentAccessDateKey, .contentModificationDateKey]) {
             return vals.contentAccessDate ?? vals.contentModificationDate
