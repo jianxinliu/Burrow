@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var retentionDays: Int = Store.retentionDays
     @State private var autoVacuum: Bool = Store.autoVacuum
     @State private var queryServerEnabled: Bool = Store.queryServerEnabled
+    @State private var showMenuBarIcon: Bool = Store.showMenuBarIcon
     @State private var dbSizeText: String = "—"
     @State private var lastMaintenanceText: String = "—"
     @State private var moleVersion: String = "—"
@@ -101,6 +102,14 @@ struct SettingsView: View {
                         promptRow("Is Burrow collecting data? When was the last sample?")
 
                         footnote("Config path is your agent's MCP settings (e.g. ~/.claude/settings.json). Read-only: agents can query history but never write or run cleanups. Data stays on this Mac.")
+                    }
+
+                    section("Menu bar", "menubar.rectangle") {
+                        toggleRow("Show menu bar icon", isOn: $showMenuBarIcon) { on in
+                            Store.showMenuBarIcon = on
+                            AppDelegate.shared?.applyMenuBarVisibility(on)
+                        }
+                        footnote("Applies immediately. When off, Burrow shows a Dock icon instead so it stays reachable — a Dock click reopens the window.")
                     }
 
                     section("Local HTTP query server", "antenna.radiowaves.left.and.right") {

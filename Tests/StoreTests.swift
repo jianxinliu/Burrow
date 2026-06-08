@@ -24,9 +24,18 @@ final class StoreTests: XCTestCase {
             "query_server_enabled",
             "last_history_range_minutes",
             "fda_notice_dismissed",
+            "show_menu_bar_icon",
         ] {
             UserDefaults.standard.removeObject(forKey: k)
         }
+    }
+
+    // Issue #4: the menu-bar icon is on by default; the off-switch must
+    // persist (it's read once at launch to decide menu-bar vs Dock mode).
+    func testShowMenuBarIcon_defaultsTrueAndPersists() {
+        XCTAssertTrue(Store.showMenuBarIcon)
+        Store.showMenuBarIcon = false
+        XCTAssertFalse(Store.showMenuBarIcon)
     }
 
     func testSampleInterval_defaultsTo60() {

@@ -113,8 +113,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.maintenance = maintenance
         maintenance.start()
 
-        self.statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+        if Store.showMenuBarIcon {
+            self.statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+        }
         self.setupMainMenu()
+
+        // Without the menu-bar icon there's no agent entry point (the app is
+        // LSUIElement, so no Dock icon either). Run as a regular Dock app and
+        // open the window on launch so it stays reachable (issue #4).
+        if !Store.showMenuBarIcon, #available(macOS 14, *) {
+            NSApp.setActivationPolicy(.regular)
+            self.openMainWindow(initial: .tool(.status))
+        }
 
         // Dev affordance: launch with BURROW_OPEN_ON_LAUNCH=1 to pop the
         // main window straight away (used for screenshot/verify loops).
@@ -196,8 +206,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - Window delegate
 
     func windowWillClose(_ notification: Notification) {
-        // Dashboard closed → back to a pure menu-bar agent (no Dock icon).
-        NSApp.setActivationPolicy(.accessory)
+        // Retreat to a pure menu-bar agent only when the menu-bar icon is
+        // the actual entry point — keyed off what we installed at launch,
+        // not the live Store value (which a mid-session toggle could change
+        // before a relaunch, stranding the app). With no status item, keep
+        // the Dock icon so the app stays reachable (issue #4).
+        if statusBar != nil {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Clicking the Dock icon (menu-bar-disabled mode) reopens the window.
+    /// When windows are already visible we return false so AppKit performs
+    /// its default raise-windows behaviour rather than us suppressing it.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard !hasVisibleWindows else { return false }
+        if #available(macOS 14, *) { self.openMainWindow(initial: .tool(.status)) }
+        return true
+    }
+
+    // MARK: - Menu-bar visibility (live)
+
+    /// Apply the "Show menu bar icon" setting immediately, without a relaunch.
+    /// Installs/removes the status item, and when hiding it keeps a Dock
+    /// presence + an open window so the app never becomes unreachable.
+    func applyMenuBarVisibility(_ show: Bool) {
+        guard let db = db, let sampler = sampler else { return }
+        if show {
+            if statusBar == nil {
+                statusBar = StatusBarController(db: db, sampler: sampler, delegate: self)
+            }
+        } else {
+            statusBar = nil   // StatusBarController.deinit removes the item
+            if #available(macOS 14, *) {
+                NSApp.setActivationPolicy(.regular)
+                // mainWC is retained (isReleasedWhenClosed = false), so its
+                // window is non-nil even when closed — check visibility, not nil,
+                // so hiding the menu bar always leaves a visible window.
+                if mainWC?.window?.isVisible != true { openMainWindow(initial: .tool(.status)) }
+            }
+        }
     }
 
     // MARK: - Main menu
