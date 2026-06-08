@@ -31,6 +31,16 @@ final class Sampler {
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "dev.caezium.burrow.sampler", qos: .utility)
     private let dec = JSONDecoder()
+    /// Fills the gaps Mole leaves on Apple Silicon (disk I/O, GPU usage) by
+    /// reading them natively and patching them into the snapshot JSON.
+    private let local = LocalMetrics()
+
+    /// While a live metrics view (Status / History) is on screen we sample
+    /// much faster so network spikes and disk-I/O bursts actually land on the
+    /// chart instead of being missed between the slow background ticks. Off
+    /// screen we fall back to the configured interval to keep the app idle.
+    private var foreground = false
+    private let foregroundInterval: TimeInterval = 5
 
     /// Wall-clock time of the most recent successful sample. Exposed for
     /// the menu-bar status surface so we can show "12s ago" without
@@ -61,14 +71,36 @@ final class Sampler {
         self.timer = nil
     }
 
+    /// Switch between background and live (foreground) cadence. Called by the
+    /// metrics views as they appear/disappear. Turning it on takes a fresh
+    /// sample immediately so the view isn't waiting a whole interval for data.
+    func setForeground(_ on: Bool) {
+        self.queue.async {
+            guard self.foreground != on else { return }
+            self.foreground = on
+            if on { self.tick() }     // immediate fresh sample for the opening view
+            self.scheduleNext()        // re-arm at the new cadence right away
+        }
+    }
+
+    /// The cadence for the next fire. Foreground uses the faster of the live
+    /// interval and the user's configured one (so a user who set 5 s keeps it).
+    private func currentInterval() -> TimeInterval {
+        let slow = TimeInterval(Store.sampleIntervalSeconds)
+        return self.foreground ? min(self.foregroundInterval, slow) : slow
+    }
+
     /// One-shot timer that re-arms after each tick. This is what lets
-    /// the Sampler honor a Settings change at runtime without us
-    /// teaching it to observe UserDefaults — we just re-pull the value
-    /// at the moment we schedule the next fire.
+    /// the Sampler honor a Settings change (or a foreground switch) at runtime
+    /// — we re-pull the interval at the moment we schedule the next fire.
+    /// Cancels any pending timer first so a mid-wait `setForeground` re-arm
+    /// can't leave two timers running.
     private func scheduleNext() {
-        let interval = TimeInterval(Store.sampleIntervalSeconds)
+        self.timer?.cancel()
+        let interval = self.currentInterval()
         let t = DispatchSource.makeTimerSource(queue: self.queue)
-        t.schedule(deadline: .now() + interval, repeating: .never, leeway: .seconds(2))
+        t.schedule(deadline: .now() + interval, repeating: .never,
+                   leeway: .milliseconds(self.foreground ? 250 : 2000))
         t.setEventHandler { [weak self] in
             self?.tick()
             self?.scheduleNext()
@@ -93,7 +125,10 @@ final class Sampler {
             NSLog("Burrow.Sampler: mo status exit=\(result.exitCode) stderr=\(result.stderr.prefix(200))")
             return
         }
-        guard let data = result.stdout.data(using: .utf8) else { return }
+        // Patch in natively-read disk I/O + GPU usage where Mole reports none,
+        // then treat the patched text as the canonical snapshot (decode + store).
+        let json = self.local.patched(json: result.stdout)
+        guard let data = json.data(using: .utf8) else { return }
 
         // Parse first — a malformed snapshot shouldn't pollute the DB.
         let snapshot: MoleStatus
@@ -129,7 +164,7 @@ final class Sampler {
         // captures the sample window, not the JSON-emit time.
         let ts = Int(snapshot.collectedAt.timeIntervalSince1970)
         do {
-            try self.db.insert(prefix: Sampler.snapshotPrefix, ts: ts, json: result.stdout)
+            try self.db.insert(prefix: Sampler.snapshotPrefix, ts: ts, json: json)
         } catch {
             NSLog("Burrow.Sampler: DB insert failed: \(error.localizedDescription)")
             return

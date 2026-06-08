@@ -707,7 +707,10 @@ struct ToolCatalog {
         var moArgs = ["uninstall"]
         if permanent { moArgs.append("--permanent") }
         moArgs += apps
-        let res = Self.runMo(moArgs, timeout: 600)
+        // mo uninstall is interactive ("Proceed? [y/N]" + "Enter confirm"); feed
+        // yes so it doesn't block forever on a non-TTY. The Settings opt-in +
+        // confirm:true above are the real gate.
+        let res = Self.runMo(moArgs, stdin: String(repeating: "y\n", count: 16), timeout: 600)
         return Self.actionResult(command: "uninstall", dryRun: false, ran: res.exitCode == 0, res: res,
                                  extra: ["apps": apps, "permanent": permanent])
     }
@@ -735,8 +738,8 @@ struct ToolCatalog {
 
     /// Run `mo` with the given args, never throwing — a missing binary
     /// becomes exit code 127 so callers can degrade gracefully.
-    private static func runMo(_ args: [String], timeout: TimeInterval) -> MoleCLI.Result {
-        (try? MoleCLI.run(args: args, timeout: timeout))
+    private static func runMo(_ args: [String], stdin: String? = nil, timeout: TimeInterval) -> MoleCLI.Result {
+        (try? MoleCLI.run(args: args, stdin: stdin, timeout: timeout))
             ?? MoleCLI.Result(stdout: "", stderr: "mo not found", exitCode: 127)
     }
 

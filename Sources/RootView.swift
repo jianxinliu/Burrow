@@ -39,6 +39,15 @@ struct RootView: View {
         .frame(minWidth: 940, minHeight: 640)
         .environment(\.colorScheme, .dark)
         .animation(.easeInOut(duration: 0.22), value: pane)
+        // Sample fast only while a live metrics pane is on screen.
+        .onAppear { sampler.setForeground(Self.isMetricsPane(pane)) }
+        .onChange(of: pane) { _, p in sampler.setForeground(Self.isMetricsPane(p)) }
+        .onDisappear { sampler.setForeground(false) }
+    }
+
+    /// Panes whose charts want live, high-cadence data.
+    static func isMetricsPane(_ p: Pane) -> Bool {
+        p == .tool(.status) || p == .history
     }
 
     // Tools stay alive (preserving in-flight `mo` jobs); the two utility

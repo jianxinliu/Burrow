@@ -26,6 +26,10 @@ final class MoInteractiveRunner: ObservableObject {
     /// Total Mole reported in its "[n/total]" header. When it exceeds
     /// `items.count`, Mole capped the visible rows and the UI says so.
     @Published var totalCount: Int = 0
+    /// "Show all" pulled in every row past Mole's ≈50-row viewport cap.
+    @Published var fullyLoaded = false
+    /// Scroll-capture in progress (drives the "Loading all N…" affordance).
+    @Published var loadingAll = false
 
     let title: String
     private let subcommand: String
@@ -37,6 +41,7 @@ final class MoInteractiveRunner: ObservableObject {
     private var pressedProceed = false   // first Enter sent → capturing Mole's "Remove N?" screen
     private var confirmScreen = ""       // output between the first and second Enter
     private var wantedCount = 0          // how many we intend to remove (verified on the confirm screen)
+    private var viewportCount = 0        // rows in the FIRST frame — Mole's viewport cap (≈50)
 
     init(subcommand: String, title: String) {
         self.subcommand = subcommand; self.title = title
@@ -60,6 +65,7 @@ final class MoInteractiveRunner: ObservableObject {
         screen = ""; result = ""; confirmScreen = ""
         confirmed = false; listReady = false; pressedProceed = false
         items = []; resultText = ""; totalCount = 0; wantedCount = 0
+        viewportCount = 0; fullyLoaded = false; loadingAll = false
         phase = .scanning
         pty.onExit = { [weak self] in Task { @MainActor in self?.handleExit() } }
         do { try pty.launch(mo, [subcommand]) }
@@ -73,6 +79,39 @@ final class MoInteractiveRunner: ObservableObject {
 
     func rescan() { start() }
 
+    // MARK: - Show all (scroll past Mole's viewport cap)
+
+    /// Pull in every row past Mole's ≈50-row viewport cap. Mole renders only a
+    /// window of the list but the cursor scrolls through ALL of it, so we walk
+    /// to the bottom one row at a time, stitching each overlapping frame into
+    /// one ordered list, then return the cursor to the top so a later selection
+    /// walk still starts at row 0. Append-only, so indices the user already
+    /// selected stay valid. Validated against `mo purge --dry-run`.
+    func loadAll() {
+        guard phase == .choosing, !fullyLoaded, !loadingAll else { return }
+        guard totalCount > items.count else { fullyLoaded = true; return }
+        loadingAll = true
+        scrollCapture(pressesLeft: totalCount + 20)
+    }
+
+    private func scrollCapture(pressesLeft: Int) {
+        guard loadingAll, phase == .choosing else { loadingAll = false; return }
+        let vp = MoTUI.parse(screen).items
+        if !vp.isEmpty { items = MoTUI.mergeItems(items, vp) }
+        if items.count >= totalCount || pressesLeft <= 0 {
+            // Return cursor to the top (over-send; Mole clamps at row 0).
+            for _ in 0..<(items.count + 5) { pty.send(MoTUI.up) }
+            fullyLoaded = true
+            loadingAll = false
+            return
+        }
+        pty.send(MoTUI.down)
+        if screen.count > 80_000 { screen = String(screen.suffix(40_000)) }  // keep parse cheap
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            self?.scrollCapture(pressesLeft: pressesLeft - 1)
+        }
+    }
+
     /// Apply selection: toggle the wanted rows, then poll the screen until the
     /// redraw settles and confirm ONLY if the checked rows match the wanted
     /// items BY NAME (not just by index) and the list didn't shift/scroll —
@@ -84,9 +123,67 @@ final class MoInteractiveRunner: ObservableObject {
         phase = .applying
         wantedCount = wanted.count
         let wantedNames = Set(wanted.compactMap { items.indices.contains($0) ? items[$0].name : nil })
+        let wantedSigs = Set(wanted.compactMap { items.indices.contains($0) ? Self.sig(items[$0]) : nil })
         let expectedCount = items.count
         pty.send(MoTUI.keystrokesToSelect(wanted, count: items.count, confirm: false))
-        verifyThenConfirm(wanted: wanted, wantedNames: wantedNames, expectedCount: expectedCount, attempt: 0, last: nil)
+        if items.count > viewportCount {
+            // Selection spans more rows than Mole renders at once (the user
+            // pulled in everything via "Show all"). Verifying by re-reading a
+            // single frame can't see them all, so we scroll through and confirm
+            // the checked rows match BY IDENTITY before letting Mole proceed.
+            scrollVerifyThenConfirm(wantedSigs: wantedSigs)
+        } else {
+            verifyThenConfirm(wanted: wanted, wantedNames: wantedNames, expectedCount: expectedCount, attempt: 0, last: nil)
+        }
+    }
+
+    /// Row identity for safe comparison — full path/name plus size and location,
+    /// so two projects sharing a basename can't be confused.
+    private static func sig(_ i: MoTUIItem) -> String { "\(i.name)\u{1}\(i.size)\u{1}\(i.location)" }
+
+    /// Verify a selection that spans more than one viewport: scroll from the
+    /// top to the bottom accumulating the CHECKED rows, then proceed only if
+    /// that set exactly equals what the user picked. Any mismatch or timeout →
+    /// quit, remove nothing. Mole's own "Remove N?" count is the final backstop
+    /// in `awaitFinalConfirm`.
+    private func scrollVerifyThenConfirm(wantedSigs: Set<String>) {
+        guard phase == .applying else { return }
+        for _ in 0..<(items.count + 5) { pty.send(MoTUI.up) }   // back to the top
+        screen = ""                                              // read only post-selection frames
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            self.scrollVerifyStep(wantedSigs: wantedSigs, checked: [], seen: [],
+                                  pressesLeft: self.items.count + 20)
+        }
+    }
+
+    private func scrollVerifyStep(wantedSigs: Set<String>, checked: Set<String>,
+                                  seen: Set<String>, pressesLeft: Int) {
+        guard phase == .applying else { return }
+        var checked = checked, seen = seen
+        for it in MoTUI.parse(screen).items {
+            let s = Self.sig(it)
+            seen.insert(s)
+            if it.selected { checked.insert(s) }
+        }
+        if seen.count >= items.count || pressesLeft <= 0 {
+            if checked == wantedSigs {
+                pressedProceed = true
+                confirmScreen = ""
+                pty.send([0x0d])              // proceed to Mole's final "Remove N?" screen
+                awaitFinalConfirm(attempt: 0)
+            } else {
+                pty.send(MoTUI.quit)
+                phase = .failed("Couldn't verify the full selection safely (\(checked.count)/\(wantedSigs.count) confirmed). Nothing was removed — please try again.")
+            }
+            return
+        }
+        pty.send(MoTUI.down)
+        if screen.count > 80_000 { screen = String(screen.suffix(40_000)) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            self?.scrollVerifyStep(wantedSigs: wantedSigs, checked: checked, seen: seen,
+                                   pressesLeft: pressesLeft - 1)
+        }
     }
 
     /// Re-read every 0.15s (up to ~2s) until the on-screen selection is stable
@@ -177,6 +274,7 @@ final class MoInteractiveRunner: ObservableObject {
             if !parsed.items.isEmpty {
                 listReady = true
                 items = parsed.items
+                viewportCount = parsed.items.count
                 totalCount = max(MoTUI.totalCount(screen) ?? parsed.items.count, parsed.items.count)
                 phase = .choosing
             }
@@ -336,11 +434,26 @@ struct MoInteractiveView: View {
             }
             .scrollIndicators(.visible)
 
-            if runner.totalCount > runner.items.count {
-                Text("Showing the \(runner.items.count) biggest of \(runner.totalCount). For the rest, run `mo \(cfg.subcommand)` in a terminal.")
-                    .font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18).padding(.bottom, 4)
+            if runner.loadingAll {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.small).tint(cfg.tool.accent)
+                    Text("Loading all \(runner.totalCount)… (\(runner.items.count) so far)")
+                        .font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18).padding(.bottom, 4)
+            } else if runner.totalCount > runner.items.count {
+                HStack(spacing: 8) {
+                    Text("Showing the \(runner.items.count) biggest of \(runner.totalCount).")
+                        .font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
+                    Button { runner.loadAll() } label: {
+                        Text("Show all \(runner.totalCount)")
+                            .font(Brand.mono(9, .semibold)).foregroundStyle(cfg.tool.accent)
+                    }.buttonStyle(.plain)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18).padding(.bottom, 4)
             }
 
             Rectangle().fill(Brand.hairline).frame(height: 1)

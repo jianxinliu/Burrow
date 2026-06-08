@@ -140,6 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.sampler?.stop()
         self.queryServer?.stop()
         self.maintenance?.stop()
+        // Final flush so any just-changed setting survives an app replacement
+        // during an update.
+        UserDefaults.standard.synchronize()
     }
 
     // MARK: - Window
@@ -214,6 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if statusBar != nil {
             NSApp.setActivationPolicy(.accessory)
         }
+        // No live chart on screen → drop back to the idle sample cadence.
+        self.sampler?.setForeground(false)
     }
 
     /// Clicking the Dock icon (menu-bar-disabled mode) reopens the window.

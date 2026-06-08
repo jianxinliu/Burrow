@@ -113,9 +113,15 @@ enum MoleCLI {
     /// seconds; on timeout the process is terminated and we throw, rather
     /// than returning a partial result, because callers always want
     /// either a complete snapshot or to retry.
+    ///
+    /// `stdin` feeds the child's standard input then closes it (EOF). This
+    /// is how the uninstall flow answers Mole's `Proceed? [y/N]` and
+    /// `Enter confirm` prompts — a GUI app's inherited stdin is closed, so
+    /// without this `mo uninstall <app>` blocks forever on the prompt.
     @discardableResult
     static func run(args: [String],
                     executable: String? = nil,
+                    stdin: String? = nil,
                     timeout: TimeInterval = 10) throws -> Result {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: executable ?? (findExecutable() ?? "/usr/bin/false"))
@@ -126,7 +132,19 @@ enum MoleCLI {
         task.standardOutput = outPipe
         task.standardError = errPipe
 
+        let inPipe: Pipe? = stdin != nil ? Pipe() : nil
+        if let inPipe { task.standardInput = inPipe }
+
         try task.run()
+
+        // Write the canned input and close the write end so the child sees
+        // EOF after consuming it. Ignore write failures: if Mole exits before
+        // reading everything, the pipe write fails with EPIPE, which is fine.
+        if let inPipe, let stdin, let data = stdin.data(using: .utf8) {
+            let h = inPipe.fileHandleForWriting
+            try? h.write(contentsOf: data)
+            try? h.close()
+        }
 
         // Kill the task after `timeout` if it's still running. The
         // termination handler clears the timer so we don't fire stale

@@ -338,7 +338,15 @@ final class SoftwareModel: ObservableObject {
         let opId = UUID()
         OperationCenter.shared.begin(opId, label: "Uninstalling \(targets.count) app\(targets.count == 1 ? "" : "s")")
         DispatchQueue.global(qos: .userInitiated).async {
-            let res = try? MoleCLI.run(args: ["uninstall"] + names, timeout: 300)
+            // `mo uninstall <app>` is interactive: it prints the matched apps,
+            // asks "Proceed with uninstallation? [y/N]", then a final "Enter
+            // confirm" screen. A GUI app has no TTY/stdin, so without feeding
+            // answers it blocks until the timeout and nothing happens. Burrow
+            // already gated this behind its own confirm sheet above, so it's
+            // safe to auto-answer yes. The repeated lines cover both prompts
+            // (and any per-app variation); extra input is harmless once mo exits.
+            let answers = String(repeating: "y\n", count: 16)
+            let res = try? MoleCLI.run(args: ["uninstall"] + names, stdin: answers, timeout: 300)
             let parsed = Self.fetch()
             Task { @MainActor in
                 self.apps = parsed

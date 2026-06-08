@@ -89,6 +89,26 @@ enum MoTUI {
     }
 
     static let quit: [UInt8] = [0x71]  // 'q'
+    static let down: [UInt8] = [0x1b, 0x5b, 0x42]  // ESC [ B
+    static let up: [UInt8] = [0x1b, 0x5b, 0x41]    // ESC [ A
+
+    /// Merge a freshly-parsed viewport into the running ordered list, appending
+    /// only rows we haven't seen yet (identity = name+size+location). Mole's
+    /// selection TUI renders a fixed-height scrolling window (≈50 rows max), so
+    /// reaching every item on a long list means scrolling and stitching the
+    /// overlapping frames back into one ordered list. Pure → unit-tested.
+    static func mergeItems(_ acc: [MoTUIItem], _ viewport: [MoTUIItem]) -> [MoTUIItem] {
+        var out = acc
+        var seen = Set(acc.map(identity))
+        for item in viewport where seen.insert(identity(item)).inserted {
+            out.append(item)
+        }
+        return out
+    }
+
+    private static func identity(_ i: MoTUIItem) -> String {
+        "\(i.name)\u{1}\(i.size)\u{1}\(i.location)"
+    }
 
     /// Total item count from a "[current/total]" header. Mole caps how many
     /// rows it renders (≈50), so on a long list the header total exceeds the
@@ -100,11 +120,16 @@ enum MoTUI {
         return Int(inside.split(separator: "/").last.map(String.init) ?? "")
     }
 
-    /// The N from Mole's final confirm screen ("Remove 3 artifacts, 1.2GB" /
-    /// "Remove 1 installer"). Used to verify the count before the second Enter.
+    /// The N from Mole's final confirm screen. Mole's wording varies by tool
+    /// and version: `purge` says "Remove 3 artifacts, 1.2GB", `installer` says
+    /// "Delete 1 installers, 771KB". Matching only "Remove" silently broke the
+    /// installer flow (the count never parsed, so we timed out at the confirm
+    /// screen — "didn't reach its confirm screen in time"). Accept any of the
+    /// verbs Mole uses, taking the integer that immediately follows.
     static func removalCount(_ raw: String) -> Int? {
         let text = stripANSI(raw)
-        guard let r = text.range(of: #"Remove\s+\d+"#, options: .regularExpression) else { return nil }
+        guard let r = text.range(of: #"(?:Remove|Delete|Clean|Trash|Free)\s+(\d+)"#,
+                                 options: .regularExpression) else { return nil }
         return Int(text[r].filter(\.isNumber))
     }
 

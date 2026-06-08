@@ -46,6 +46,16 @@ struct ProcessRow: Identifiable {
     let name: String
     let peakCPU: Double
     let peakMem: Double
+    let peakMemBytes: UInt64
+}
+
+/// Which resource the Top Processes table ranks by. Mole's `top_processes`
+/// only carries CPU + memory per process (no per-process network/disk), so
+/// those are the two axes we can honestly rank.
+enum ProcMetric: String, CaseIterable, Identifiable {
+    case cpu = "CPU"
+    case ram = "RAM"
+    var id: String { rawValue }
 }
 
 /// Splits a series into segments wherever consecutive samples are farther
@@ -81,6 +91,11 @@ private struct HistorySnapshot {
     var netTx: [ChartPoint] = []
     var thermalCPU: [ChartPoint] = []
     var thermalGPU: [ChartPoint] = []
+    var thermalBattery: [ChartPoint] = []
+    var fanSpeed: [ChartPoint] = []
+    var fanCount: Int = 0
+    var batteryPercent: [ChartPoint] = []
+    var gpuUsage: [ChartPoint] = []
     var healthScore: [ChartPoint] = []
 
     var topProcesses: [ProcessRow] = []
@@ -111,6 +126,7 @@ private enum HistoryLoader {
         let dec = JSONDecoder()
         var peakCPU: [String: Double] = [:]
         var peakMem: [String: Double] = [:]
+        var peakMemBytes: [String: UInt64] = [:]
 
         for row in rows {
             guard let data = row.json.data(using: .utf8) else { continue }
@@ -129,24 +145,31 @@ private enum HistoryLoader {
             if let thermal = s.thermal {
                 if thermal.cpuTemp > 0 { snap.thermalCPU.append(.init(time: t, value: thermal.cpuTemp)) }
                 if thermal.gpuTemp > 0 { snap.thermalGPU.append(.init(time: t, value: thermal.gpuTemp)) }
+                if let bt = thermal.batteryTemp, bt > 0 { snap.thermalBattery.append(.init(time: t, value: bt)) }
+                if thermal.fanSpeed > 0 { snap.fanSpeed.append(.init(time: t, value: Double(thermal.fanSpeed))) }
+                snap.fanCount = max(snap.fanCount, thermal.fanCount ?? 0)
             }
+            if let b = s.batteries?.first { snap.batteryPercent.append(.init(time: t, value: b.percent)) }
+            if let g = s.gpu?.first, g.usage >= 0 { snap.gpuUsage.append(.init(time: t, value: g.usage)) }
             snap.healthScore.append(.init(time: t, value: Double(s.healthScore)))
 
             for p in (s.topProcesses ?? []) {
                 if p.cpu > (peakCPU[p.name] ?? 0)    { peakCPU[p.name] = p.cpu }
                 if p.memory > (peakMem[p.name] ?? 0) { peakMem[p.name] = p.memory }
+                if let mb = p.memoryBytes, mb > (peakMemBytes[p.name] ?? 0) { peakMemBytes[p.name] = mb }
             }
             snap.memoryPressure = s.memory.pressure
         }
 
-        let topByCPU = peakCPU.sorted { $0.value > $1.value }.prefix(15).map(\.key)
-        let topByMem = peakMem.sorted { $0.value > $1.value }.prefix(15).map(\.key)
+        let topByCPU = peakCPU.sorted { $0.value > $1.value }.prefix(20).map(\.key)
+        let topByMem = peakMem.sorted { $0.value > $1.value }.prefix(20).map(\.key)
         var seen = Set<String>()
         var rows2: [ProcessRow] = []
         for name in topByCPU + topByMem where seen.insert(name).inserted {
             rows2.append(ProcessRow(name: name,
                                     peakCPU: peakCPU[name] ?? 0,
-                                    peakMem: peakMem[name] ?? 0))
+                                    peakMem: peakMem[name] ?? 0,
+                                    peakMemBytes: peakMemBytes[name] ?? 0))
         }
         snap.topProcesses = rows2.sorted { $0.peakCPU > $1.peakCPU }
 
@@ -187,6 +210,7 @@ struct HistoryView: View {
     @State private var snapshot: HistorySnapshot = HistorySnapshot()
     @State private var loading: Bool = false
     @State private var loadGen: Int = 0
+    @State private var procMetric: ProcMetric = .cpu
 
     private let autoRefreshTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
@@ -200,12 +224,17 @@ struct HistoryView: View {
                         chartCard("CPU load", "1m avg", [("load1", snapshot.cpuLoad1, Brand.orange)])
                         chartCard("Memory", snapshot.memoryPressure.isEmpty ? "% used" : snapshot.memoryPressure,
                                   [("used", snapshot.memoryUsed, Brand.amber)])
+                        chartCard("GPU usage", "%", [("gpu", snapshot.gpuUsage, Brand.orange)])
                         chartCard("Disk I/O", "MB/s", [("read", snapshot.diskRead, Brand.blue),
                                                        ("write", snapshot.diskWrite, Color(hex: 0x6E8BEA))])
                         chartCard("Network", "MB/s", [("rx", snapshot.netRx, Brand.green),
                                                       ("tx", snapshot.netTx, Color(hex: 0x57C2A5))])
                         chartCard("Thermal", "°C", [("cpu", snapshot.thermalCPU, Brand.red),
-                                                    ("gpu", snapshot.thermalGPU, Brand.orange)])
+                                                    ("gpu", snapshot.thermalGPU, Brand.orange),
+                                                    ("battery", snapshot.thermalBattery, Brand.gold)])
+                        chartCard("Fans", snapshot.fanCount > 0 ? "RPM" : "not reported",
+                                  [("fan", snapshot.fanSpeed, Color(hex: 0x6EC1E4))])
+                        chartCard("Battery", "%", [("charge", snapshot.batteryPercent, Brand.green)])
                         chartCard("Health score", "0–100", [("health", snapshot.healthScore, Brand.gold)])
                         topProcessesCard
                     }
@@ -305,36 +334,87 @@ struct HistoryView: View {
         }
     }
 
+    /// Processes ranked by the selected metric (CPU or RAM), peak across the
+    /// window. The same rows carry both peaks, so switching the toggle just
+    /// re-sorts in place — no reload.
+    private var rankedProcesses: [ProcessRow] {
+        switch procMetric {
+        case .cpu: return snapshot.topProcesses.sorted { $0.peakCPU > $1.peakCPU }
+        case .ram: return snapshot.topProcesses.sorted {
+            ($0.peakMemBytes, $0.peakMem) > ($1.peakMemBytes, $1.peakMem)
+        }
+        }
+    }
+
     private var topProcessesCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(NSLocalizedString("Top processes", comment: "").uppercased()).font(Brand.mono(10, .bold)).tracking(0.7).foregroundStyle(Brand.textSecondary)
                     Text("peak across window").font(Brand.mono(9)).foregroundStyle(Brand.textTertiary)
+                    Spacer()
+                    procMetricToggle
                 }
                 if snapshot.topProcesses.isEmpty {
                     Text("No processes recorded")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textTertiary)
                         .frame(maxWidth: .infinity, minHeight: 170)
                 } else {
+                    // Column header makes it clear which number is which once the
+                    // ranking can change what's on top.
+                    HStack {
+                        Text("").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("CPU").font(Brand.mono(8, .bold)).tracking(0.5)
+                            .foregroundStyle(procMetric == .cpu ? Brand.green : Brand.textTertiary)
+                            .frame(width: 52, alignment: .trailing)
+                        Text("RAM").font(Brand.mono(8, .bold)).tracking(0.5)
+                            .foregroundStyle(procMetric == .ram ? Brand.amber : Brand.textTertiary)
+                            .frame(width: 70, alignment: .trailing)
+                    }
                     ScrollView {
                         VStack(spacing: 3) {
-                            ForEach(snapshot.topProcesses.prefix(18)) { row in
+                            ForEach(rankedProcesses.prefix(20)) { row in
                                 HStack {
                                     Text(row.name).font(Brand.sans(11)).foregroundStyle(Brand.textPrimary).lineLimit(1)
                                     Spacer(minLength: 8)
                                     Text(String(format: "%.1f%%", row.peakCPU)).font(Brand.mono(10))
-                                        .foregroundStyle(Brand.green).frame(width: 52, alignment: .trailing)
-                                    Text(String(format: "%.1f%%", row.peakMem)).font(Brand.mono(10))
-                                        .foregroundStyle(Brand.amber).frame(width: 52, alignment: .trailing)
+                                        .foregroundStyle(procMetric == .cpu ? Brand.green : Brand.textTertiary)
+                                        .frame(width: 52, alignment: .trailing)
+                                    Text(ramLabel(row)).font(Brand.mono(10))
+                                        .foregroundStyle(procMetric == .ram ? Brand.amber : Brand.textTertiary)
+                                        .frame(width: 70, alignment: .trailing)
                                 }
                             }
                         }
                     }
-                    .frame(height: 170)
+                    .frame(height: 148)
                 }
             }
         }
+    }
+
+    /// RAM column shows an absolute size when Mole reported bytes, else the
+    /// percent it always carries.
+    private func ramLabel(_ row: ProcessRow) -> String {
+        row.peakMemBytes > 0 ? Fmt.bytes(Int64(row.peakMemBytes)) : String(format: "%.1f%%", row.peakMem)
+    }
+
+    private var procMetricToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(ProcMetric.allCases) { m in
+                let on = m == procMetric
+                Button { procMetric = m } label: {
+                    Text(m.rawValue).font(Brand.mono(9, on ? .bold : .regular))
+                        .foregroundStyle(on ? Color.black : Brand.textSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background { if on { Capsule().fill(.white) } }
+                        .contentShape(Capsule())
+                }.buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.black.opacity(0.22)))
+        .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
     }
 
     // MARK: - Load lifecycle

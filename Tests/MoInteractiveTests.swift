@@ -99,6 +99,33 @@ final class MoInteractiveTests: XCTestCase {
         XCTAssertNil(MoTUI.totalCount(frame), "installer frame has no [n/M] header")
     }
 
+    func testMergeItems_stitchesOverlappingScrolledFrames() {
+        // Two overlapping viewports as the list scrolls down by one row: the
+        // first shows rows 0–2, the second rows 1–3. Merged in order, only the
+        // genuinely-new row 3 is appended.
+        let a = MoTUI.parse(purgeFrame).items
+        let scrolled = """
+        Select Categories to Clean [2/53], 0B, 0 selected
+          \u{25CB} ~/Desktop/the-ripples                    1.20GB | node_modules      | <1d
+          \u{25CB} ~/Desktop/devport                        1.05GB | node_modules      | 2d
+        \u{27A4} \u{25CB} ~/Desktop/newproj                        900MB | .build            | 3d
+        \u{2191}\u{2193} | Space Select | Enter Confirm | A All | I Invert | Q Quit
+        """
+        let b = MoTUI.parse(scrolled).items
+        let merged = MoTUI.mergeItems(a, b)
+        XCTAssertEqual(merged.map { $0.name },
+                       ["~/Desktop/Wisp", "~/Desktop/the-ripples", "~/Desktop/devport", "~/Desktop/newproj"])
+    }
+
+    func testMergeItems_dedupesByFullIdentityNotJustName() {
+        // Same basename, different size/location → two distinct rows, both kept.
+        let one = [MoTUIItem(name: "receipts", size: "10MB", location: "node_modules", selected: false)]
+        let two = [MoTUIItem(name: "receipts", size: "20MB", location: ".venv", selected: false),
+                   MoTUIItem(name: "receipts", size: "10MB", location: "node_modules", selected: false)]
+        let merged = MoTUI.mergeItems(one, two)
+        XCTAssertEqual(merged.count, 2, "the 20MB/.venv 'receipts' is a different row; the duplicate is dropped")
+    }
+
     // Mole's SECOND (final) confirm screen, captured from a real `mo purge`.
     private let confirmScreen = """
     Selected paths:
@@ -110,5 +137,16 @@ final class MoInteractiveTests: XCTestCase {
         XCTAssertEqual(MoTUI.removalCount(confirmScreen), 1)
         XCTAssertEqual(MoTUI.removalCount("➤ Remove 12 artifacts, 4.1GB  Enter confirm, ESC cancel:"), 12)
         XCTAssertNil(MoTUI.removalCount(frame), "the selection list is not a final-confirm screen")
+    }
+
+    // Regression: `mo installer` confirms with "Delete N installers", not
+    // "Remove N". Matching only "Remove" meant the count never parsed and the
+    // installer flow always failed with "didn't reach its confirm screen in time".
+    func testRemovalCount_parsesInstallerDeleteWording() {
+        XCTAssertEqual(MoTUI.removalCount("➤ Delete 1 installers, 771KB  Enter confirm, ESC cancel:"), 1)
+        XCTAssertEqual(MoTUI.removalCount("➤ Delete 23 installers, 4.1GB  Enter confirm, ESC cancel:"), 23)
+        // The installer SELECTION header also contains the word "Remove" ("Select
+        // Installers to Remove …") but no count after it — must stay nil.
+        XCTAssertNil(MoTUI.removalCount("Select Installers to Remove , 1.26GB, 2 selected"))
     }
 }

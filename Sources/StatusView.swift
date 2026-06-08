@@ -100,8 +100,8 @@ struct StatusView: View {
 
     private func cpuTile(_ s: MoleStatus) -> MetricTile {
         let chip: (String, Color)
-        if let t = s.thermal, t.cpuTemp > 0 {
-            chip = (String(format: "%.0f°C", t.cpuTemp), Brand.orange)
+        if let temp = s.thermal?.bestTemp {
+            chip = (String(format: "%.0f°C", temp), Brand.orange)
         } else {
             chip = (String(format: NSLocalizedString("%d cores", comment: ""), s.cpu.coreCount), Brand.textSecondary)
         }

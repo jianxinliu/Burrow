@@ -233,24 +233,55 @@ struct BatteryStatus: Codable {
 struct ThermalStatus: Codable {
     let cpuTemp: Double
     let gpuTemp: Double
+    /// Battery temperature (°C). On Apple Silicon, `cpu_temp`/`gpu_temp` are
+    /// usually 0 (no unprivileged SMC die-temp), but battery temp IS reported
+    /// — so it's the one thermal series that actually has data on these Macs.
+    let batteryTemp: Double?
     let fanSpeed: Int
+    /// Number of fans Mole detected. 0 means Mole couldn't read any fan (common
+    /// on Apple Silicon) — the UI treats 0 as "no fan data" rather than "idle".
+    let fanCount: Int?
     let systemPower: Double
+    let adapterPower: Double?
+    let batteryPower: Double?
 
     private enum CodingKeys: String, CodingKey {
         case cpuTemp = "cpu_temp"
         case gpuTemp = "gpu_temp"
+        case batteryTemp = "battery_temp"
         case fanSpeed = "fan_speed"
+        case fanCount = "fan_count"
         case systemPower = "system_power"
+        case adapterPower = "adapter_power"
+        case batteryPower = "battery_power"
+    }
+
+    /// The best temperature reading available, in °C — CPU first, then GPU,
+    /// then battery. Returns nil only when nothing is reported (all 0/absent).
+    var bestTemp: Double? {
+        if cpuTemp > 0 { return cpuTemp }
+        if gpuTemp > 0 { return gpuTemp }
+        if let b = batteryTemp, b > 0 { return b }
+        return nil
     }
 }
 
 /// Avoid the name `Process` to not collide with `Foundation.Process`.
 struct ProcessInfo: Codable {
     let pid: Int
+    let ppid: Int?
     let name: String
     let command: String
     let cpu: Double
     let memory: Double
+    /// Resident memory in bytes, when Mole reports it. Lets the UI rank by
+    /// absolute RAM (not just percent) and show a human size.
+    let memoryBytes: UInt64?
+
+    private enum CodingKeys: String, CodingKey {
+        case pid, ppid, name, command, cpu, memory
+        case memoryBytes = "memory_bytes"
+    }
 }
 
 struct GPUStatus: Codable {

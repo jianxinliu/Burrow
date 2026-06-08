@@ -19,6 +19,16 @@ import Foundation
 enum Store {
     private static let d = UserDefaults.standard
 
+    /// Persist a value AND flush it to disk immediately. UserDefaults writes
+    /// are normally batched by cfprefsd, so a setting changed seconds before
+    /// the app is replaced/killed by an updater could be lost — which is what
+    /// "my menu-bar / retention setting resets after an update" looks like.
+    /// Flushing on write closes that window for the user-facing toggles.
+    private static func write(_ value: Any?, _ key: String) {
+        d.set(value, forKey: key)
+        d.synchronize()
+    }
+
     // MARK: - Sampler
 
     /// Seconds between `mo status --json` invocations. Clamp to [5, 3600]
@@ -30,7 +40,7 @@ enum Store {
             return raw == 0 ? 60 : max(5, min(raw, 3600))
         }
         set {
-            d.set(max(5, min(newValue, 3600)), forKey: "sample_interval_seconds")
+            write(max(5, min(newValue, 3600)), "sample_interval_seconds")
         }
     }
 
@@ -45,7 +55,7 @@ enum Store {
             return raw == 0 ? 30 : max(1, raw)
         }
         set {
-            d.set(max(1, newValue), forKey: "retention_days")
+            write(max(1, newValue), "retention_days")
         }
     }
 
@@ -55,7 +65,7 @@ enum Store {
     /// snapshot/minute) the freelist reclaim isn't worth the I/O.
     static var autoVacuum: Bool {
         get { d.object(forKey: "auto_vacuum") as? Bool ?? false }
-        set { d.set(newValue, forKey: "auto_vacuum") }
+        set { write(newValue, "auto_vacuum") }
     }
 
     // MARK: - Menu bar
@@ -66,7 +76,7 @@ enum Store {
     /// reopens it) — read once at launch, so a change needs a relaunch.
     static var showMenuBarIcon: Bool {
         get { d.object(forKey: "show_menu_bar_icon") as? Bool ?? true }
-        set { d.set(newValue, forKey: "show_menu_bar_icon") }
+        set { write(newValue, "show_menu_bar_icon") }
     }
 
     // MARK: - AI (Explain lens)
@@ -76,7 +86,7 @@ enum Store {
     /// leaves the Mac.
     static var aiEnabled: Bool {
         get { d.object(forKey: "ai_enabled") as? Bool ?? false }
-        set { d.set(newValue, forKey: "ai_enabled") }
+        set { write(newValue, "ai_enabled") }
     }
 
     /// Which Explain backend to use: "ollama" (local, default) or "openai"
@@ -146,7 +156,7 @@ enum Store {
     /// a localhost listener.
     static var queryServerEnabled: Bool {
         get { d.object(forKey: "query_server_enabled") as? Bool ?? true }
-        set { d.set(newValue, forKey: "query_server_enabled") }
+        set { write(newValue, "query_server_enabled") }
     }
 
     /// Key for the destructive-MCP opt-in. Shared so the MCP process can
