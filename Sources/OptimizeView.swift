@@ -54,7 +54,7 @@ struct OptimizeView: View {
                         .font(Brand.mono(11)).foregroundStyle(Brand.red)
                 }.buttonStyle(.plain)
             }
-            if isDone {
+            if isDone || isFailed {
                 Button { runner.reset() } label: {
                     Label("Back", systemImage: "chevron.left")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
@@ -65,6 +65,7 @@ struct OptimizeView: View {
 
     private var isRunning: Bool { runner.phase == .running }
     private var isDone: Bool { if case .done = runner.phase { return true }; return false }
+    private var isFailed: Bool { if case .failed = runner.phase { return true }; return false }
 
     private var statusText: String {
         switch runner.phase {
