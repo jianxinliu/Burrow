@@ -138,11 +138,21 @@ struct FullDiskAccessRequired: View {
     /// on the gate and reveals the relaunch hint — macOS frequently only
     /// applies a freshly-flipped grant at the app's next launch.
     var onRecheck: () -> Bool
-    var onRunAnyway: () -> Void
+    /// "Scan with admin" — only meaningful where running elevated actually
+    /// dodges the prompts (e.g. cache scans). For Downloads/Desktop/Documents,
+    /// TCC is keyed on the APP, not the uid, so root doesn't help — pass nil
+    /// there and only Full Disk Access is offered.
+    var onRunAnyway: (() -> Void)? = nil
     var onCancel: () -> Void
     var onRelaunch: () -> Void = { Privacy.relaunch() }
 
     @State private var stillBlocked = false
+
+    private var blurb: String {
+        onRunAnyway != nil
+            ? "This reads system and app caches through Mole. Without Full Disk Access, macOS makes you approve every protected folder — one prompt after another. Grant it once in System Settings and the prompts stop for good. Or run the scan with administrator rights instead: one password, no per-folder asks. Burrow only reads sizes; it never opens that data itself."
+            : "Mole scans your Downloads, Desktop and project folders. Without Full Disk Access, macOS makes you approve every protected folder — one prompt after another. Grant it once in System Settings and the prompts stop for good. Burrow only reads sizes; it never opens that data itself."
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -154,7 +164,7 @@ struct FullDiskAccessRequired: View {
             VStack(spacing: 8) {
                 Text("Grant Full Disk Access to scan")
                     .font(Brand.serif(20, .medium)).foregroundStyle(Brand.textPrimary)
-                Text("This reads system and app caches through Mole. Without Full Disk Access, macOS makes you approve every protected folder — one prompt after another. Grant it once in System Settings and the prompts stop for good. Or run the scan with administrator rights instead: one password, no per-folder asks. Burrow only reads sizes; it never opens that data itself.")
+                Text(blurb)
                     .font(Brand.sans(12)).foregroundStyle(Brand.textSecondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 460)
@@ -164,8 +174,10 @@ struct FullDiskAccessRequired: View {
                 HStack(spacing: 18) {
                     Button("I've granted it — scan") { stillBlocked = !onRecheck() }
                         .buttonStyle(.plain).font(Brand.sans(12, .semibold)).foregroundStyle(accent)
-                    Button("Scan with admin") { onRunAnyway() }
-                        .buttonStyle(.plain).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
+                    if let onRunAnyway {
+                        Button("Scan with admin") { onRunAnyway() }
+                            .buttonStyle(.plain).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
+                    }
                     Button("Cancel") { onCancel() }
                         .buttonStyle(.plain).font(Brand.mono(11)).foregroundStyle(Brand.textTertiary)
                 }

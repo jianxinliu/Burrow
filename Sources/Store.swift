@@ -69,6 +69,65 @@ enum Store {
         set { d.set(newValue, forKey: "show_menu_bar_icon") }
     }
 
+    // MARK: - AI (Explain lens)
+
+    /// Whether the optional "Explain" AI lens is enabled. Off by default —
+    /// it's opt-in, and when on it defaults to a local model so nothing
+    /// leaves the Mac.
+    static var aiEnabled: Bool {
+        get { d.object(forKey: "ai_enabled") as? Bool ?? false }
+        set { d.set(newValue, forKey: "ai_enabled") }
+    }
+
+    /// Which Explain backend to use: "ollama" (local, default) or "openai"
+    /// (any OpenAI-compatible server — LM Studio, llama.cpp, OpenAI, …).
+    static var aiProvider: String {
+        get {
+            let v = (d.string(forKey: "ai_provider") ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            return v == "openai" ? "openai" : "ollama"
+        }
+        set { d.set(newValue, forKey: "ai_provider") }
+    }
+
+    /// The local Ollama model the Explain lens talks to. Small + fast by
+    /// default; the user can point it at any model they've pulled.
+    static var aiOllamaModel: String {
+        get {
+            let v = (d.string(forKey: "ai_ollama_model") ?? "").trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? "llama3.2" : v
+        }
+        set { d.set(newValue, forKey: "ai_ollama_model") }
+    }
+
+    /// Base URL for the OpenAI-compatible endpoint — must end in `/v1`.
+    /// Defaults to LM Studio's local server (Developer ▸ Start Server).
+    static var aiOpenAIBaseURL: String {
+        get {
+            let v = (d.string(forKey: "ai_openai_base_url") ?? "").trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? "http://127.0.0.1:1234/v1" : v
+        }
+        set { d.set(newValue, forKey: "ai_openai_base_url") }
+    }
+
+    /// Model id for the OpenAI-compatible endpoint. LM Studio accepts the
+    /// loaded model's id (or the alias most servers map to it).
+    static var aiOpenAIModel: String {
+        get {
+            let v = (d.string(forKey: "ai_openai_model") ?? "").trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? "local-model" : v
+        }
+        set { d.set(newValue, forKey: "ai_openai_model") }
+    }
+
+    /// Optional Bearer API key for the OpenAI-compatible endpoint. Leave
+    /// blank for LM Studio / local servers that don't check it; required
+    /// for hosted APIs (e.g. OpenAI). Stored in UserDefaults — fine for a
+    /// localhost key; move to Keychain before shipping cloud keys.
+    static var aiOpenAIKey: String {
+        get { d.string(forKey: "ai_openai_key") ?? "" }
+        set { d.set(newValue, forKey: "ai_openai_key") }
+    }
+
     // MARK: - MCP / QueryServer
 
     /// Localhost port for the JSON HTTP server. 9277 by default

@@ -20,6 +20,12 @@ struct SettingsView: View {
     @State private var queryServerEnabled: Bool = Store.queryServerEnabled
     @State private var mcpActionsEnabled: Bool = Store.mcpActionsEnabled
     @State private var showMenuBarIcon: Bool = Store.showMenuBarIcon
+    @State private var aiEnabled: Bool = Store.aiEnabled
+    @State private var aiProvider: String = Store.aiProvider
+    @State private var aiOllamaModel: String = Store.aiOllamaModel
+    @State private var aiOpenAIBaseURL: String = Store.aiOpenAIBaseURL
+    @State private var aiOpenAIModel: String = Store.aiOpenAIModel
+    @State private var aiOpenAIKey: String = Store.aiOpenAIKey
     @State private var dbSizeText: String = "—"
     @State private var lastMaintenanceText: String = "—"
     @State private var moleVersion: String = "—"
@@ -133,6 +139,30 @@ struct SettingsView: View {
                             AppDelegate.shared?.applyMenuBarVisibility(on)
                         }
                         footnote("Applies immediately. When off, Burrow shows a Dock icon instead so it stays reachable — a Dock click reopens the window.")
+                    }
+
+                    section("Explain (AI) — experimental", "sparkles") {
+                        toggleRow("Enable the Explain lens", isOn: $aiEnabled) { Store.aiEnabled = $0 }
+                        HStack {
+                            Text("Backend").font(Brand.sans(12)).foregroundStyle(Brand.textPrimary)
+                            Spacer()
+                            Picker("", selection: $aiProvider) {
+                                Text("Local · Ollama").tag("ollama")
+                                Text("LM Studio / API").tag("openai")
+                            }
+                            .labelsHidden().pickerStyle(.segmented).frame(width: 230)
+                            .onChange(of: aiProvider) { _, v in Store.aiProvider = v }
+                        }
+                        if aiProvider == "ollama" {
+                            aiField("Ollama model", placeholder: "llama3.2", text: $aiOllamaModel) { Store.aiOllamaModel = $0 }
+                            footnote("Runs against a local Ollama model — nothing leaves this Mac. Start it with `ollama run <model>`.")
+                        } else {
+                            aiField("Base URL", placeholder: "http://127.0.0.1:1234/v1", text: $aiOpenAIBaseURL) { Store.aiOpenAIBaseURL = $0 }
+                            aiField("Model", placeholder: "local-model", text: $aiOpenAIModel) { Store.aiOpenAIModel = $0 }
+                            aiField("API key (optional)", placeholder: "blank for LM Studio", text: $aiOpenAIKey) { Store.aiOpenAIKey = $0 }
+                            footnote("Any OpenAI-compatible server. For LM Studio: load a model, open Developer ▸ Start Server, and leave the key blank — the default URL is already LM Studio's. A hosted endpoint (e.g. OpenAI) needs a key and sends the metrics summary off-device (never file contents).")
+                        }
+                        footnote("Adds an \u{201C}Explain\u{201D} button to Status that reads your latest snapshot and explains it in plain English, optionally suggesting Clean/Purge/Installers.")
                     }
 
                     section("Local HTTP query server", "antenna.radiowaves.left.and.right") {
@@ -327,6 +357,20 @@ struct SettingsView: View {
         .toggleStyle(.switch)
         .tint(Brand.green)
         .onChange(of: isOn.wrappedValue) { _, n in onChange(n) }
+    }
+
+    /// Trailing-aligned text-field row that persists on every keystroke, so
+    /// closing Settings never loses an in-progress edit.
+    private func aiField(_ label: String, placeholder: String, text: Binding<String>,
+                         onChange: @escaping (String) -> Void) -> some View {
+        HStack {
+            Text(label).font(Brand.sans(12)).foregroundStyle(Brand.textPrimary)
+            Spacer()
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain).font(Brand.mono(11))
+                .multilineTextAlignment(.trailing).frame(width: 200)
+                .onChange(of: text.wrappedValue) { _, v in onChange(v) }
+        }
     }
 
     private func pickerRow(_ label: String, selection: Binding<Int>,
