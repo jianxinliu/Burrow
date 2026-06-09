@@ -40,8 +40,8 @@ struct TopNav: View {
             withAnimation(.easeOut(duration: 0.16)) { selected = .home }
         } label: {
             BurrowMark()
-                .frame(width: 24, height: 24)
-                .padding(4)
+                .frame(width: 22, height: 22)
+                .padding(3)
                 .background { if isOn { Circle().fill(Color.white.opacity(0.14)) } }
                 .overlay { if isOn { Circle().strokeBorder(Brand.cream.opacity(0.5), lineWidth: 1.5) } }
                 .contentShape(Circle())
@@ -83,9 +83,9 @@ struct TopNav: View {
             withAnimation(.easeOut(duration: 0.16)) { selected = pane }
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isOn ? Color.black : Brand.textSecondary)
-                .frame(width: 28, height: 26)
+                .frame(width: 32, height: 28)
                 .background { if isOn { Capsule(style: .continuous).fill(Color.white) } }
                 .contentShape(Capsule())
         }

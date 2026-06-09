@@ -154,6 +154,14 @@ struct AnalyzeView: View {
 
     private var toolbar: some View {
         HStack(spacing: 6) {
+            Button { model.goUp() } label: {
+                Image(systemName: "arrow.up").font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(model.canGoUp ? Brand.textSecondary : Brand.textTertiary.opacity(0.35))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(!model.canGoUp)
+            .help(NSLocalizedString("Go up", comment: ""))
             ForEach(Array(model.crumbs.enumerated()), id: \.offset) { idx, crumb in
                 if idx > 0 {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
@@ -183,7 +191,7 @@ struct TreemapView: View {
     let entries: [DiskScanEntry]
     let onOpen: (DiskScanEntry) -> Void
     var onTrash: (DiskScanEntry) -> Void = { _ in }
-    @State private var hovered: String?
+    @State private var hoveredIndex: Int?
 
     private static let palette: [Color] = [
         Color(hex: 0x4FA3E3), Color(hex: 0x57C2A5), Color(hex: 0xE6A93C),
@@ -198,25 +206,33 @@ struct TreemapView: View {
                                        in: CGRect(x: 0, y: 0, width: geo.size.width, height: geo.size.height))
             ZStack(alignment: .topLeading) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { i, e in
-                    block(e, rects[i], color: Self.palette[i % Self.palette.count])
+                    block(e, rects[i], color: Self.palette[i % Self.palette.count], isHover: hoveredIndex == i)
+                }
+            }
+            .contentShape(Rectangle())
+            // One hit-test against the laid-out rects — per-block `.offset` +
+            // `.onHover` mis-fired (the offset view's hit region didn't track
+            // the cell), so hovering would light up the wrong square.
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let pt): hoveredIndex = rects.firstIndex { $0.contains(pt) }
+                case .ended:          hoveredIndex = nil
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func block(_ e: DiskScanEntry, _ r: CGRect, color: Color) -> some View {
+    private func block(_ e: DiskScanEntry, _ r: CGRect, color: Color, isHover: Bool) -> some View {
         let w = max(0, r.width - 2)
         let h = max(0, r.height - 2)
-        let isHover = hovered == e.id
         RoundedRectangle(cornerRadius: 4, style: .continuous)
             .fill(LinearGradient(colors: [color.opacity(isHover ? 0.95 : 0.8), color.opacity(isHover ? 0.7 : 0.55)],
                                  startPoint: .top, endPoint: .bottom))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(isHover ? Color.white.opacity(0.6) : Color.black.opacity(0.25), lineWidth: 1))
             .overlay(label(e, w: w, h: h))
             .frame(width: w, height: h)
             .offset(x: r.minX + 1, y: r.minY + 1)
-            .onHover { hovered = $0 ? e.id : (hovered == e.id ? nil : hovered) }
             .onTapGesture { onOpen(e) }
             .contextMenu {
                 Button(NSLocalizedString("Reveal in Finder", comment: "")) { AnalyzeIcons.reveal(e.path) }
@@ -301,6 +317,23 @@ final class AnalyzeModel: ObservableObject {
         guard let last = crumbs.last else { return }
         cache[last.path] = nil   // drop the cached walk so we re-scan
         scan(last.path, name: last.name, push: false, force: true)
+    }
+
+    /// Whether there's a parent to climb to (Home isn't the ceiling — you can
+    /// go up to /Users, /, external volumes, …). False only at the filesystem root.
+    var canGoUp: Bool {
+        guard let p = crumbs.first?.path, !p.isEmpty else { return false }
+        return p != "/"
+    }
+
+    /// Climb to the parent of the current root, making it the new breadcrumb root.
+    func goUp() {
+        guard let root = crumbs.first else { return }
+        let parent = (root.path as NSString).deletingLastPathComponent
+        guard !parent.isEmpty, parent != root.path else { return }
+        let name = parent == "/" ? "/" : (parent as NSString).lastPathComponent
+        crumbs = []
+        scan(parent, name: name.isEmpty ? "/" : name, push: true)
     }
 
     /// Move an item to the Trash (recoverable), after an explicit confirm. The

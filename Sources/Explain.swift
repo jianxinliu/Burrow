@@ -183,7 +183,19 @@ struct ExplainResult: Equatable {
 // MARK: - Prompt
 
 enum ExplainPrompt {
+    /// Whether the running UI language is Chinese (explicit override or system).
+    static func isChinese() -> Bool {
+        switch Store.appLanguage {
+        case "zh-Hans": return true
+        case "en":      return false
+        default:        return (Bundle.main.preferredLocalizations.first ?? Locale.current.identifier).hasPrefix("zh")
+        }
+    }
+
     static func make(_ ctx: ExplainContext) -> (system: String, user: String) {
+        let language = isChinese()
+            ? "\n\nWrite the explanation in Simplified Chinese (简体中文). Keep the final ACTION line exactly as specified, in English."
+            : ""
         let system = """
         You are Burrow's assistant. Explain a macOS user's system health in plain, \
         calm English from the data below — a live snapshot, a short recent trend, and \
@@ -194,7 +206,7 @@ enum ExplainPrompt {
         the form `ACTION: clean`, `ACTION: purge`, `ACTION: installer`, or `ACTION: none` \
         — clean = system/app caches, purge = old project build artifacts, \
         installer = leftover .dmg/.pkg files. Use `none` if nothing is needed.
-        """
+        """ + language
         let user = "System data:\n\(ctx.factSheet)"
         return (system, user)
     }
