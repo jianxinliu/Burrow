@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // Anonymous, opt-out, once-per-day. Fired before the `mo` gate so a
+        // launch with the engine missing still counts (a useful signal).
+        Telemetry.ping()
+
         // No engine yet → guided install instead of a dead-end quit. The
         // window's Recheck calls startServices() once `mo` is found.
         guard MoleCLI.findExecutable() != nil else {
@@ -108,6 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                               intervalSeconds: TimeInterval(Store.sampleIntervalSeconds))
         self.sampler = sampler
         sampler.start()
+
+        // Always-on 1 s network + disk reader: feeds the live Home tiles AND the
+        // History charts so both update at the same (fast) cadence. (We're on the
+        // main thread at launch; assumeIsolated satisfies the @MainActor reader.)
+        MainActor.assumeIsolated { IOMonitor.shared.start() }
 
         let maintenance = Maintenance(db: db)
         self.maintenance = maintenance

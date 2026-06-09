@@ -14,11 +14,11 @@
 
 import SwiftUI
 import AppKit
-import Combine
 
 /// The Overview section of Home: live metric cards + the process table.
 struct StatusView: View {
     @StateObject private var model: StatusModel
+    @ObservedObject private var io = IOMonitor.shared
 
     init(db: DB, sampler: Sampler) {
         _model = StateObject(wrappedValue: StatusModel(db: db, sampler: sampler))
@@ -38,7 +38,7 @@ struct StatusView: View {
                         gpuTile(s).frame(minHeight: row1H)
                     }
                     HStack(spacing: 13) {
-                        DiskCard(s: s, minHeight: row2H)
+                        DiskCard(s: s, liveRead: io.readMBs, liveWrite: io.writeMBs, minHeight: row2H)
                         netTile(s).frame(minHeight: row2H)
                         BatteryCard(s: s, minHeight: row2H)
                     }
@@ -120,10 +120,9 @@ struct StatusView: View {
         let snapNet = s.network.first(where: { !$0.ip.isEmpty }) ?? s.network.first
         // Prefer the native 1 s monitor (catches bursts the mo poll misses); the
         // mo snapshot is the fallback before the monitor has any samples.
-        let live = model.net
-        let useLive = !live.history.isEmpty
-        let rx = useLive ? live.rxMBs : (snapNet?.rxRateMbs ?? 0)
-        let tx = useLive ? live.txMBs : (snapNet?.txRateMbs ?? 0)
+        let useLive = !io.samples.isEmpty
+        let rx = useLive ? io.rxMBs : (snapNet?.rxRateMbs ?? 0)
+        let tx = useLive ? io.txMBs : (snapNet?.txRateMbs ?? 0)
         let total = rx + tx
         let value: String
         let unit: String
@@ -134,7 +133,7 @@ struct StatusView: View {
         return MetricTile(
             eyebrow: "Network", glyph: "network", accent: Brand.green,
             value: value, unit: unit, chip: chip,
-            values: useLive ? live.history : model.netHist, chartStyle: .area,
+            values: useLive ? io.netHistory : model.netHist, chartStyle: .area,
             footnote: "↓ \(rate(rx))  ↑ \(rate(tx)) · \(snapNet?.name ?? "—") · \(snapNet?.ip ?? "—")")
     }
 
@@ -252,6 +251,9 @@ struct HealthRing: View {
 
 struct DiskCard: View {
     let s: MoleStatus
+    /// Live 1 s disk throughput from IOMonitor; falls back to the mo snapshot.
+    var liveRead: Double? = nil
+    var liveWrite: Double? = nil
     var minHeight: CGFloat? = nil
 
     var body: some View {
@@ -275,7 +277,7 @@ struct DiskCard: View {
                 ProgressBar(fraction: pct / 100, color: barColor)
                 Spacer(minLength: 2)
                 Text(String(format: NSLocalizedString("%.0f%% used · R %.0f · W %.0f MB/s", comment: ""),
-                            pct, s.diskIO.readRate, s.diskIO.writeRate))
+                            pct, liveRead ?? s.diskIO.readRate, liveWrite ?? s.diskIO.writeRate))
                     .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary).lineLimit(1)
             }
         }
@@ -553,14 +555,10 @@ final class StatusModel: ObservableObject {
     @Published var sortAsc = false
     @Published var pinned: Set<Int> = []
 
-    /// Native 1 s network throughput — its bursts are too fast for the mo poll.
-    let net = NetworkMonitor()
-
     private let db: DB
     private let sampler: Sampler
     private var liveTimer: Timer?
     private var histTimer: Timer?
-    private var netSub: AnyCancellable?
 
     init(db: DB, sampler: Sampler) {
         self.db = db
@@ -570,10 +568,6 @@ final class StatusModel: ObservableObject {
     func start() {
         refreshCurrent()
         refreshHistory()
-        net.start()
-        // Re-publish on the monitor's 1 s updates so the network tile refreshes
-        // between the 2 s live ticks.
-        netSub = net.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         liveTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshCurrent() }
         }
@@ -585,7 +579,6 @@ final class StatusModel: ObservableObject {
     func stop() {
         liveTimer?.invalidate(); liveTimer = nil
         histTimer?.invalidate(); histTimer = nil
-        net.stop(); netSub = nil
     }
 
     func setSort(_ key: ProcSort) {
