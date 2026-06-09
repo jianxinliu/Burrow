@@ -16,7 +16,7 @@ cask "burrow" do
   homepage "https://github.com/caezium/Burrow"
 
   depends_on formula: "mole"
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Burrow.app"
 
