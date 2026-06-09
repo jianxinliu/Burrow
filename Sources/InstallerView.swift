@@ -5,19 +5,26 @@
 //  The Installers tool — pick which leftover installers to remove, with
 //  MOLE doing the deletion. Mole's `installer` is an interactive selection
 //  TUI (no flags/JSON for targeted removal), so Burrow runs it in a
-//  pseudo-terminal (MoInteractiveRunner), shows Mole's own list as a native
-//  checklist, and replays the user's choices as keystrokes — then verifies
-//  the on-screen selection before letting Mole confirm. Nothing is removed
-//  by Burrow itself.
+//  pseudo-terminal, shows Mole's own list as a native checklist, and replays
+//  the user's choices as keystrokes — then verifies the on-screen selection
+//  before letting Mole confirm. Nothing is removed by Burrow itself.
+//
+//  The selection logic lives in the pure `SelectionSession` reducer; this
+//  file's runner is the thin host that owns the pseudo-terminal + a tick
+//  timer, pumps PTY bytes and ticks in as events, and applies the reducer's
+//  effects (send keystrokes / quit). The same view drives both installer and
+//  purge.
 //
 
 import SwiftUI
 import AppKit
 
-// MARK: - Runner (drives Mole's selection TUI)
+// MARK: - Runner (host over the SelectionSession reducer)
 
 @MainActor
 final class MoInteractiveRunner: ObservableObject {
+    /// View-facing phase. The reducer carries finer states; they collapse to
+    /// the handful the UI actually renders.
     enum Phase: Equatable { case scanning, choosing, applying, done(Int32), failed(String) }
 
     @Published var phase: Phase = .scanning
@@ -33,18 +40,17 @@ final class MoInteractiveRunner: ObservableObject {
 
     let title: String
     private let subcommand: String
-    private var pty = PTYTask()
-    private var screen = ""        // raw TUI output, pre-confirm
-    private var result = ""        // output after the FINAL Enter (Mole's removal results)
-    private var confirmed = false
-    private var listReady = false
-    private var pressedProceed = false   // first Enter sent → capturing Mole's "Remove N?" screen
-    private var confirmScreen = ""       // output between the first and second Enter
-    private var wantedCount = 0          // how many we intend to remove (verified on the confirm screen)
-    private var viewportCount = 0        // rows in the FIRST frame — Mole's viewport cap (≈50)
+    private var pty: PTYPort
+    private let tickInterval: TimeInterval
+    private var state = SelectionSession.State()
+    private var timer: DispatchSourceTimer?
 
-    init(subcommand: String, title: String) {
-        self.subcommand = subcommand; self.title = title
+    init(subcommand: String, title: String,
+         pty: PTYPort = PTYTask(), tickInterval: TimeInterval = 0.06) {
+        self.subcommand = subcommand
+        self.title = title
+        self.pty = pty
+        self.tickInterval = tickInterval
         // Writing a keystroke to a pty whose child already exited raises SIGPIPE,
         // which would kill the app (try? can't catch a signal). Ignore it
         // process-wide; writes then fail with EPIPE, which we swallow.
@@ -57,248 +63,95 @@ final class MoInteractiveRunner: ObservableObject {
     /// dodge the prompts anyway — Full Disk Access is the real fix, gated by the
     /// view before we get here.
     func start() {
-        guard let mo = MoleCLI.findExecutable() else { phase = .failed("mo not found"); return }
-        // Fresh state for every (re)scan.
-        pty.master?.readabilityHandler = nil
+        stopTimer()
         pty.terminate()
-        pty = PTYTask()
-        screen = ""; result = ""; confirmScreen = ""
-        confirmed = false; listReady = false; pressedProceed = false
-        items = []; resultText = ""; totalCount = 0; wantedCount = 0
-        viewportCount = 0; fullyLoaded = false; loadingAll = false
-        phase = .scanning
-        pty.onExit = { [weak self] in Task { @MainActor in self?.handleExit() } }
+        state = SelectionSession.State()
+        publish()
+        pty.onOutput = { [weak self] s in MainActor.assumeIsolated { self?.dispatch(.output(s)) } }
+        pty.onExit = { [weak self] code in MainActor.assumeIsolated { self?.dispatch(.processExited(code)) } }
+        guard let mo = MoleCLI.findExecutable() else { phase = .failed("mo not found"); return }
         do { try pty.launch(mo, [subcommand]) }
-        catch { phase = .failed("Couldn't start `mo \(subcommand)`."); return }
-        pty.master?.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
-            Task { @MainActor in self?.ingest(s) }
-        }
+        catch { phase = .failed("Couldn't start `mo \(subcommand)`.") }
     }
 
-    func rescan() { start() }
-
-    // MARK: - Show all (scroll past Mole's viewport cap)
-
-    /// Pull in every row past Mole's ≈50-row viewport cap. Mole renders only a
-    /// window of the list but the cursor scrolls through ALL of it, so we walk
-    /// to the bottom one row at a time, stitching each overlapping frame into
-    /// one ordered list, then return the cursor to the top so a later selection
-    /// walk still starts at row 0. Append-only, so indices the user already
-    /// selected stay valid. Validated against `mo purge --dry-run`.
-    func loadAll() {
-        guard phase == .choosing, !fullyLoaded, !loadingAll else { return }
-        guard totalCount > items.count else { fullyLoaded = true; return }
-        loadingAll = true
-        scrollCapture(pressesLeft: totalCount + 20)
-    }
-
-    private func scrollCapture(pressesLeft: Int) {
-        guard loadingAll, phase == .choosing else { loadingAll = false; return }
-        let vp = MoTUI.parse(screen).items
-        if !vp.isEmpty { items = MoTUI.mergeItems(items, vp) }
-        if items.count >= totalCount || pressesLeft <= 0 {
-            // Return cursor to the top (over-send; Mole clamps at row 0).
-            for _ in 0..<(items.count + 5) { pty.send(MoTUI.up) }
-            fullyLoaded = true
-            loadingAll = false
-            return
-        }
-        pty.send(MoTUI.down)
-        if screen.count > 80_000 { screen = String(screen.suffix(40_000)) }  // keep parse cheap
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
-            self?.scrollCapture(pressesLeft: pressesLeft - 1)
-        }
-    }
-
-    /// Apply selection: toggle the wanted rows, then poll the screen until the
-    /// redraw settles and confirm ONLY if the checked rows match the wanted
-    /// items BY NAME (not just by index) and the list didn't shift/scroll —
-    /// otherwise quit without removing anything. Identity matching means a
-    /// scrolled frame that happens to check the same index positions can't
-    /// trick Mole into deleting the wrong files.
-    func confirm(_ wanted: Set<Int>) {
-        guard phase == .choosing, !wanted.isEmpty else { return }
-        phase = .applying
-        wantedCount = wanted.count
-        let wantedNames = Set(wanted.compactMap { items.indices.contains($0) ? items[$0].name : nil })
-        let wantedSigs = Set(wanted.compactMap { items.indices.contains($0) ? Self.sig(items[$0]) : nil })
-        let expectedCount = items.count
-        pty.send(MoTUI.keystrokesToSelect(wanted, count: items.count, confirm: false))
-        if items.count > viewportCount {
-            // Selection spans more rows than Mole renders at once (the user
-            // pulled in everything via "Show all"). Verifying by re-reading a
-            // single frame can't see them all, so we scroll through and confirm
-            // the checked rows match BY IDENTITY before letting Mole proceed.
-            scrollVerifyThenConfirm(wantedSigs: wantedSigs)
-        } else {
-            verifyThenConfirm(wanted: wanted, wantedNames: wantedNames, expectedCount: expectedCount, attempt: 0, last: nil)
-        }
-    }
-
-    /// Row identity for safe comparison — full path/name plus size and location,
-    /// so two projects sharing a basename can't be confused.
-    private static func sig(_ i: MoTUIItem) -> String { "\(i.name)\u{1}\(i.size)\u{1}\(i.location)" }
-
-    /// Verify a selection that spans more than one viewport: scroll from the
-    /// top to the bottom accumulating the CHECKED rows, then proceed only if
-    /// that set exactly equals what the user picked. Any mismatch or timeout →
-    /// quit, remove nothing. Mole's own "Remove N?" count is the final backstop
-    /// in `awaitFinalConfirm`.
-    private func scrollVerifyThenConfirm(wantedSigs: Set<String>) {
-        guard phase == .applying else { return }
-        for _ in 0..<(items.count + 5) { pty.send(MoTUI.up) }   // back to the top
-        screen = ""                                              // read only post-selection frames
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self else { return }
-            self.scrollVerifyStep(wantedSigs: wantedSigs, checked: [], seen: [],
-                                  pressesLeft: self.items.count + 20)
-        }
-    }
-
-    private func scrollVerifyStep(wantedSigs: Set<String>, checked: Set<String>,
-                                  seen: Set<String>, pressesLeft: Int) {
-        guard phase == .applying else { return }
-        var checked = checked, seen = seen
-        for it in MoTUI.parse(screen).items {
-            let s = Self.sig(it)
-            seen.insert(s)
-            if it.selected { checked.insert(s) }
-        }
-        if seen.count >= items.count || pressesLeft <= 0 {
-            if checked == wantedSigs {
-                pressedProceed = true
-                confirmScreen = ""
-                pty.send([0x0d])              // proceed to Mole's final "Remove N?" screen
-                awaitFinalConfirm(attempt: 0)
-            } else {
-                pty.send(MoTUI.quit)
-                phase = .failed("Couldn't verify the full selection safely (\(checked.count)/\(wantedSigs.count) confirmed). Nothing was removed — please try again.")
-            }
-            return
-        }
-        pty.send(MoTUI.down)
-        if screen.count > 80_000 { screen = String(screen.suffix(40_000)) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
-            self?.scrollVerifyStep(wantedSigs: wantedSigs, checked: checked, seen: seen,
-                                   pressesLeft: pressesLeft - 1)
-        }
-    }
-
-    /// Re-read every 0.15s (up to ~2s) until the on-screen selection is stable
-    /// across two reads, then verify by index AND name AND unchanged row count
-    /// before pressing Enter. Any mismatch or timeout → quit, delete nothing.
-    private func verifyThenConfirm(wanted: Set<Int>, wantedNames: Set<String>,
-                                   expectedCount: Int, attempt: Int, last: Set<Int>?) {
-        guard phase == .applying else { return }
-        let screenNow = MoTUI.parse(screen)
-        let onScreen = MoTUI.selectedIndices(screenNow)
-        let maxAttempts = 14   // ~2.1s
-
-        if attempt > 0, onScreen == last {          // settled
-            let onScreenNames = Set(screenNow.items.filter { $0.selected }.map { $0.name })
-            let safe = screenNow.items.count == expectedCount
-                && onScreen == wanted
-                && onScreenNames == wantedNames
-            if safe {
-                // Selection verified. Press Enter to PROCEED to Mole's final
-                // "Remove N? Enter confirm, ESC cancel" screen, then answer it.
-                pressedProceed = true
-                confirmScreen = ""
-                pty.send([0x0d])
-                awaitFinalConfirm(attempt: 0)
-            } else {
-                pty.send(MoTUI.quit)
-                phase = .failed("Couldn't confirm the selection safely (\(onScreen.count)/\(wanted.count) toggled). Nothing was removed — please try again.")
-            }
-            return
-        }
-        guard attempt < maxAttempts else {
-            pty.send(MoTUI.quit)
-            phase = .failed("The selection didn't settle in time. Nothing was removed — please try again.")
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.verifyThenConfirm(wanted: wanted, wantedNames: wantedNames,
-                                    expectedCount: expectedCount, attempt: attempt + 1, last: onScreen)
-        }
-    }
-
-    /// After the first Enter, Mole shows a SECOND screen — "Selected paths …
-    /// Remove N artifact, X  Enter confirm, ESC cancel". Wait for it, verify
-    /// the count matches what we picked, then send the final Enter to actually
-    /// remove. Wrong count or no screen → ESC + quit, remove nothing. (Without
-    /// this, the first Enter just lands on that prompt and the run hangs.)
-    private func awaitFinalConfirm(attempt: Int) {
-        guard phase == .applying, pressedProceed, !confirmed else { return }
-        let txt = MoTUI.stripANSI(confirmScreen)
-        // Only decide once BOTH the prompt ("Enter confirm, ESC cancel") AND a
-        // parseable "Remove N" have rendered — mo draws the paths first, so a
-        // premature read would see no count and wrongly bail (the old bug).
-        if txt.localizedCaseInsensitiveContains("esc cancel"), let n = MoTUI.removalCount(txt) {
-            if n == wantedCount {
-                confirmed = true
-                pty.send([0x0d])              // second Enter → mo executes the removal
-            } else {
-                pty.send([0x1b])              // ESC → back out
-                pty.send(MoTUI.quit)
-                phase = .failed("mo's confirm showed \(n) item\(n == 1 ? "" : "s"), but you picked \(wantedCount). Nothing was removed — please rescan and try again.")
-            }
-            return
-        }
-        guard attempt < 30 else {            // ~4.5s waiting for mo's confirm screen
-            pty.send([0x1b]); pty.send(MoTUI.quit)
-            phase = .failed("mo didn't reach its confirm screen in time. Nothing was removed — please try again.")
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.awaitFinalConfirm(attempt: attempt + 1)
-        }
-    }
+    func rescan() { start() }   // tears down the old PTY itself
+    func confirm(_ wanted: Set<Int>) { dispatch(.confirmRequested(wanted)) }
+    func loadAll() { dispatch(.showAllRequested) }
 
     func cancel() {
         // Don't write to the child on teardown — if it already exited, a 'quit'
-        // byte hits a dead pty (SIGPIPE/crash). terminate() tears it down cleanly.
-        pty.master?.readabilityHandler = nil
+        // byte hits a dead pty. terminate() tears it down cleanly.
+        stopTimer()
+        pty.onOutput = nil
+        pty.onExit = nil
         pty.terminate()
-        switch phase { case .done, .failed: break; default: phase = .done(130) }
+        switch state.phase { case .done, .failed: break; default: phase = .done(130) }
     }
 
-    private func ingest(_ s: String) {
-        if confirmed { result += s; return }
-        if pressedProceed { confirmScreen += s; return }   // Mole's "Remove N?" screen
-        screen += s
-        if !listReady, screen.contains("Enter"), screen.contains("Confirm") {
-            let parsed = MoTUI.parse(screen)
-            if !parsed.items.isEmpty {
-                listReady = true
-                items = parsed.items
-                viewportCount = parsed.items.count
-                totalCount = max(MoTUI.totalCount(screen) ?? parsed.items.count, parsed.items.count)
-                phase = .choosing
+    /// Advance the reducer's logical clock. The tick timer calls this; tests
+    /// call it directly to step the machine deterministically.
+    func tick() { dispatch(.tick) }
+
+    // MARK: - Event loop
+
+    private func dispatch(_ event: SelectionSession.Event) {
+        let (next, effects) = SelectionSession.reduce(state, event)
+        state = next
+        for effect in effects {
+            switch effect {
+            case .send(let bytes): pty.send(bytes)
+            case .terminate:       pty.terminate()
             }
         }
+        publish()
+        syncTimer()
     }
 
-    private func handleExit() {
-        pty.master?.readabilityHandler = nil
-        let status = pty.terminationStatus
-        // Never override a failure/cancel we already decided on.
-        if case .failed = phase { return }
-        if case .done = phase { return }
-        if confirmed || pressedProceed {
-            // confirmed → `result` holds the removal log; if Mole exited right
-            // after the first Enter (no second screen), fall back to what we saw.
-            let raw = result.isEmpty ? confirmScreen : result
-            resultText = MoTUI.stripANSI(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-            if resultText.isEmpty { resultText = "Done — mo finished." }
-            phase = .done(status)
-        } else if !listReady {
-            // Exited before a list rendered — usually "nothing to remove".
-            phase = .done(status)
+    private func publish() {
+        phase = Self.viewPhase(state.phase)
+        items = state.items
+        totalCount = state.totalCount
+        resultText = state.resultText
+        fullyLoaded = state.fullyLoaded
+        loadingAll = (state.phase == .loadingAll)
+    }
+
+    private static func viewPhase(_ p: SelectionSession.Phase) -> Phase {
+        switch p {
+        case .scanning:              return .scanning
+        case .choosing, .loadingAll: return .choosing
+        case .applyingViewport, .applyingFull, .awaitingConfirm, .confirming:
+            return .applying
+        case .done(let c):           return .done(c)
+        case .failed(let m):         return .failed(m)
         }
-        // listReady && !confirmed → we're already in .failed; leave it.
+    }
+
+    // MARK: - Tick timer (runs only while a phase needs the logical clock)
+
+    private func syncTimer() {
+        let needsTicks: Bool
+        switch state.phase {
+        case .loadingAll, .applyingViewport, .applyingFull, .awaitingConfirm:
+            needsTicks = true
+        default:
+            needsTicks = false
+        }
+        if needsTicks { startTimer() } else { stopTimer() }
+    }
+
+    private func startTimer() {
+        guard timer == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + tickInterval, repeating: tickInterval)
+        t.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.tick() } }
+        t.resume()
+        timer = t
+    }
+
+    private func stopTimer() {
+        timer?.cancel()
+        timer = nil
     }
 }
 

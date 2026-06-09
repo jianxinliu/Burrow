@@ -160,42 +160,35 @@ enum MoTUI {
     }
 
     /// Strip CSI escape sequences so the TUI's redraw control codes don't
-    /// pollute parsing. (Mirror of CommandRunner.stripAnsi, kept local so
-    /// this file is self-contained + testable.)
-    static func stripANSI(_ s: String) -> String {
-        guard s.contains("\u{1B}") else { return s }
-        var out = String(); out.reserveCapacity(s.count)
-        var i = s.startIndex
-        while i < s.endIndex {
-            if s[i] == "\u{1B}", s.index(after: i) < s.endIndex, s[s.index(after: i)] == "[" {
-                var j = s.index(i, offsetBy: 2)
-                while j < s.endIndex {
-                    if let a = s[j].asciiValue, a >= 0x40, a <= 0x7E { j = s.index(after: j); break }
-                    j = s.index(after: j)
-                }
-                i = j; continue
-            }
-            out.append(s[i]); i = s.index(after: i)
-        }
-        return out
-    }
+    /// pollute parsing. Delegates to the one `Ansi.strip`.
+    static func stripANSI(_ s: String) -> String { Ansi.strip(s) }
 }
 
 // MARK: - Pseudo-terminal task
 
 /// A child process attached to a pseudo-terminal, so a TUI program (Mole's
-/// selection screen) believes it's interactive. Read/write the screen via
-/// `master`. The only impure seam — kept tiny.
-final class PTYTask {
-    private let proc = Process()
-    private(set) var master: FileHandle?
+/// selection screen) believes it's interactive. The production `PTYPort`: it
+/// owns its read loop and delivers output/exit on the main thread so the host
+/// reducer stays single-threaded. The only impure seam — kept tiny.
+final class PTYTask: PTYPort {
+    private var proc = Process()   // replaced on each launch (a Process runs once)
+    private var master: FileHandle?
 
-    var isRunning: Bool { proc.isRunning }
-    var terminationStatus: Int32 { proc.terminationStatus }
-    var onExit: (@Sendable () -> Void)?
+    var onOutput: ((String) -> Void)?
+    var onExit: ((Int32) -> Void)?
 
-    func launch(_ executable: String, _ args: [String], env extra: [String: String] = [:],
-                cols: UInt16 = 120, rows: UInt16 = 60) throws {
+    private let cols: UInt16
+    private let rows: UInt16
+    /// `rows` controls how many list rows Mole's TUI renders in one frame (it
+    /// caps the viewport ≈50); 60 covers the common case, with scroll-capture
+    /// handling longer lists.
+    init(cols: UInt16 = 120, rows: UInt16 = 60) { self.cols = cols; self.rows = rows }
+
+    func launch(_ executable: String, _ args: [String]) throws {
+        // A Process can only be run ONCE; a rescan calls launch again, so start
+        // from a fresh instance each time. (Reusing the old one left the second
+        // scan with a dead, never-spawning child — the UI hung on "Scanning…".)
+        proc = Process()
         var amaster: Int32 = 0
         var aslave: Int32 = 0
         var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
@@ -211,10 +204,34 @@ final class PTYTask {
         proc.standardError = slave
         var env = Foundation.ProcessInfo.processInfo.environment
         env["TERM"] = "xterm-256color"
-        for (k, v) in extra { env[k] = v }
         proc.environment = env
-        proc.terminationHandler = { [weak self] _ in self?.onExit?() }
-        master = FileHandle(fileDescriptor: amaster, closeOnDealloc: true)
+        proc.terminationHandler = { [weak self] p in
+            let code = p.terminationStatus
+            DispatchQueue.main.async { self?.onExit?(code) }
+        }
+        let m = FileHandle(fileDescriptor: amaster, closeOnDealloc: true)
+        m.readabilityHandler = { [weak self] h in
+            guard let self else { return }
+            let d = h.availableData
+            if d.isEmpty {
+                // EOF: the child closed the pty (it exited). Stop reading — left
+                // armed, an empty-data handler spins in a tight loop and starves
+                // the process's terminationHandler, so the exit would never be
+                // reported and the UI would hang (e.g. when Mole finds nothing and
+                // exits before the chooser). If the process is already reaped,
+                // report the exit ourselves; otherwise the now-unstarved
+                // terminationHandler will.
+                h.readabilityHandler = nil
+                if !self.proc.isRunning {
+                    let code = self.proc.terminationStatus
+                    DispatchQueue.main.async { self.onExit?(code) }
+                }
+                return
+            }
+            guard let s = String(data: d, encoding: .utf8) else { return }
+            DispatchQueue.main.async { self.onOutput?(s) }
+        }
+        master = m
         // Close the parent's slave fd whether or not the launch succeeds — on a
         // throw the child never starts, so nothing else would ever close it.
         do { try proc.run() }
@@ -223,5 +240,8 @@ final class PTYTask {
     }
 
     func send(_ bytes: [UInt8]) { try? master?.write(contentsOf: Data(bytes)) }
-    func terminate() { if proc.isRunning { proc.terminate() } }
+    func terminate() {
+        master?.readabilityHandler = nil
+        if proc.isRunning { proc.terminate() }
+    }
 }

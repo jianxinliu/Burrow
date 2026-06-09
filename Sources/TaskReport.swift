@@ -373,24 +373,7 @@ final class CommandRunner: ObservableObject {
         applyPending()
     }
 
-    nonisolated static func stripAnsi(_ s: String) -> String {
-        guard s.contains("\u{1B}") else { return s }
-        var out = String()
-        var i = s.startIndex
-        while i < s.endIndex {
-            let c = s[i]
-            if c == "\u{1B}", s.index(after: i) < s.endIndex, s[s.index(after: i)] == "[" {
-                var j = s.index(i, offsetBy: 2)
-                while j < s.endIndex {
-                    if let a = s[j].asciiValue, a >= 0x40, a <= 0x7E { j = s.index(after: j); break }
-                    j = s.index(after: j)
-                }
-                i = j; continue
-            }
-            out.append(c); i = s.index(after: i)
-        }
-        return out
-    }
+    nonisolated static func stripAnsi(_ s: String) -> String { Ansi.strip(s) }
 }
 
 // MARK: - Report view
