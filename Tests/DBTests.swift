@@ -76,6 +76,40 @@ final class DBTests: XCTestCase {
                       "the unusable file should be preserved alongside the fresh db")
     }
 
+    // MARK: - Reader open (the `--mcp` process) — issue #50
+
+    /// The reader process must NEVER run the destructive recovery ladder:
+    /// quarantining the file or deleting the sidecars is only safe in the
+    /// writer process — against a live writer it IS the data-loss path.
+    /// A reader that can't open fails soft and leaves repair to the writer.
+    func testReaderOpen_neverRunsTheDestructiveRecoveryLadder() throws {
+        let url = tempDir.appendingPathComponent("damaged.db")
+        let garbage = Data("not a sqlite database".utf8)
+        try garbage.write(to: url)
+        try Data("the writer's live wal".utf8).write(to: URL(fileURLWithPath: url.path + "-wal"))
+
+        XCTAssertThrowsError(try DB(readerAt: url))
+
+        XCTAssertEqual(try Data(contentsOf: url), garbage,
+                       "reader open must leave the file byte-identical")
+        // (SQLite itself may reset a stale WAL under its own file locks while
+        // attempting the open — that's its coordinated recovery, safe against
+        // a live writer. What must never happen here is OUR ladder: deleting
+        // the sidecars outright or quarantining the database.)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path + "-wal"),
+                      "reader open must not delete the writer's WAL")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path + ".corrupt"),
+                       "reader open must never quarantine")
+    }
+
+    /// Second handle on the same file — exactly what `burrow --mcp` does
+    /// while the GUI writes. WAL lets the read proceed concurrently.
+    func testReaderOpen_seesTheWriterRows() throws {
+        try db.insert(prefix: "p", ts: 1, json: "{\"v\":1}")
+        let reader = try DB(readerAt: tempDir.appendingPathComponent("burrow.db"))
+        XCTAssertEqual(reader.findLatest(prefix: "p")?.json, "{\"v\":1}")
+    }
+
     // MARK: - Roundtrip
 
     func testInsertAndFindLatest_returnsMostRecent() throws {

@@ -62,6 +62,18 @@ final class DB {
         return try DB(at: support.appendingPathComponent("burrow.db"))
     }
 
+    /// Reader-process open of the default DB — what `burrow --mcp` uses.
+    /// Same file, same WAL connection, but NO recovery ladder (see
+    /// `init(readerAt:)`).
+    static func openDefaultReader() throws -> DB {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory,
+                                               in: .userDomainMask).first!
+            .appendingPathComponent("Burrow", isDirectory: true)
+        try FileManager.default.createDirectory(at: support,
+                                                withIntermediateDirectories: true)
+        return try DB(readerAt: support.appendingPathComponent("burrow.db"))
+    }
+
     /// Test-friendly initialiser. Pass a temp path from `XCTestCase.setUp`.
     ///
     /// A damaged or non-writable history file must never brick launch
@@ -98,6 +110,20 @@ final class DB {
                 try self.open(at: url)
             }
         }
+    }
+
+    /// Reader-process initialiser: opens WITHOUT the recovery ladder.
+    ///
+    /// The GUI and `burrow --mcp` share one file; recovery (dropping
+    /// sidecars, quarantining) is only safe in the writer process — a
+    /// reader doing it against the writer's live WAL is the data-loss
+    /// path. So a reader that can't open simply throws; repair belongs
+    /// to the writer, on its next launch.
+    ///
+    /// (The connection itself is still read-write — SQLite needs RW to
+    /// participate in WAL — but this process never inserts.)
+    init(readerAt url: URL) throws {
+        try self.open(at: url)
     }
 
     /// SQLITE_BUSY / SQLITE_LOCKED (or their extended forms) — another

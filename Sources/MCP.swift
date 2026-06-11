@@ -40,12 +40,13 @@ import Foundation
 
 enum MCP {
     static func runStdioLoop() {
-        // Open the DB read-only-ish — the MCP shim never inserts, but
-        // SQLite needs RW to open in WAL mode. The GUI's sampler
-        // handles all writes; we just read.
+        // Reader open: same file the GUI writes, but WITHOUT the recovery
+        // ladder — this process must never quarantine the writer's live DB
+        // or delete its WAL. (The connection is RW at the SQLite level
+        // because WAL requires it; we still never insert.)
         let db: DB
         do {
-            db = try DB.openDefault()
+            db = try DB.openDefaultReader()
         } catch {
             stderr("burrow --mcp: failed to open DB: \(error.localizedDescription)")
             exit(1)
@@ -406,17 +407,23 @@ struct ToolCatalog {
         case "burrow_list_apps":
             return self.callListApps()
         case "burrow_clean":
-            return self.runCleanup(command: "clean", baseArgs: ["clean"],
-                                   confirm: (arguments["confirm"] as? Bool) ?? false)
+            return self.runAction(.clean, confirm: (arguments["confirm"] as? Bool) ?? false)
         case "burrow_optimize":
-            return self.runCleanup(command: "optimize", baseArgs: ["optimize"],
-                                   confirm: (arguments["confirm"] as? Bool) ?? false)
+            return self.runAction(.optimize, confirm: (arguments["confirm"] as? Bool) ?? false)
         case "burrow_uninstall":
-            return try self.callUninstall(arguments)
+            let apps = (arguments["apps"] as? [String])?
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty } ?? []
+            guard !apps.isEmpty else {
+                throw MCPToolError.badArguments("uninstall needs `apps`: one or more app names (see burrow_list_apps)")
+            }
+            return self.runAction(.uninstall(apps: apps,
+                                             permanent: (arguments["permanent"] as? Bool) ?? false),
+                                  confirm: (arguments["confirm"] as? Bool) ?? false)
         case "burrow_purge":
-            return self.callInteractivePreview(command: "purge", arguments: arguments)
+            return self.runAction(.purge, confirm: (arguments["confirm"] as? Bool) ?? false)
         case "burrow_installer":
-            return self.callInteractivePreview(command: "installer", arguments: arguments)
+            return self.runAction(.installer, confirm: (arguments["confirm"] as? Bool) ?? false)
         default:
             throw MCPToolError.unknown(name)
         }
@@ -611,16 +618,58 @@ struct ToolCatalog {
 
     // MARK: - Action tools (driving mo's real commands)
     //
-    // The read tools above never touch the disk. These do — so destructive
-    // runs pass through a two-key gate: the per-call `confirm:true` AND the
-    // user's Settings opt-in (`Store.mcpActionsEnabled`). With neither, a
-    // tool only ever runs `--dry-run` and PREVIEWS. We always drive `mo`
-    // itself — never reimplement its cleanup logic.
+    // The read tools above never touch the disk. These do — so every call
+    // routes through the shared gated-actions core: `MoActions.decide` is
+    // the one policy (the same truth table the GUI consults), `ActionWire`
+    // owns the JSON contract, and a real run is only expressible as a
+    // gate-minted RunTicket. We always drive `mo` itself — never
+    // reimplement its cleanup logic.
 
-    /// Pure gate: a real (deleting) action runs only when the per-call
-    /// confirm AND the user's opt-in are both true. Unit-tested.
-    static func realActionAllowed(confirm: Bool, optedIn: Bool) -> Bool {
-        confirm && optedIn
+    /// One shape for all five action tools: read the user's opt-ins fresh
+    /// (cross-process cfprefsd read), decide, then execute the ticket or
+    /// render the refusal.
+    private func runAction(_ action: MoAction, confirm: Bool) -> String {
+        let gate = ActionGate.agent(actionsOptIn: Store.mcpActionsEnabled,
+                                    irreversibleOptIn: Store.mcpIrreversibleEnabled)
+        switch MoActions.decide(action, confirm ? .real : .preview, gate) {
+        case .run(let ticket):
+            return self.execute(ticket)
+        case .blocked(let reason):
+            return ActionWire.blocked(command: action.commandName, reason: reason,
+                                      apps: action.wireApps)
+        case .needsConfirmation, .needsFullDiskAccess, .interactiveFlow:
+            // Unreachable from the agent gate; refuse closed if it drifts.
+            return ActionWire.blocked(command: action.commandName,
+                                      reason: .agentCleanupsOptInOff,
+                                      apps: action.wireApps)
+        }
+    }
+
+    /// Run a gate-minted ticket: preflight (uninstall pins mo's matched set
+    /// before any prompt is answered — fail closed), spawn, render.
+    private func execute(_ ticket: RunTicket) -> String {
+        if case .verifyUninstallMatch(let expected) = ticket.preflight,
+           let pre = ticket.action.preflightCommand {
+            let dry = Self.runMo(pre.args, stdin: pre.stdin, timeout: pre.timeout ?? 120)
+            guard let matched = UninstallGuard.matchedApps(inDryRunOutput: dry.stdout + "\n" + dry.stderr) else {
+                return ActionWire.uninstallAbort(apps: expected, matched: nil)
+            }
+            if let mismatch = UninstallGuard.mismatchDescription(confirmed: expected, matched: matched) {
+                return ActionWire.uninstallAbort(apps: expected, matched: matched, mismatch: mismatch)
+            }
+        }
+        let res = Self.runMo(ticket.command.args, stdin: ticket.command.stdin,
+                             timeout: ticket.command.timeout ?? 600)
+        var permanent: Bool?
+        if case .uninstall(_, let p) = ticket.action, ticket.mode == .real { permanent = p }
+        return ActionWire.result(command: ticket.action.commandName,
+                                 dryRun: ticket.mode == .preview,
+                                 ran: ticket.mode == .real && res.exitCode == 0,
+                                 exitCode: res.exitCode,
+                                 output: res.stdout.isEmpty ? res.stderr : res.stdout,
+                                 apps: ticket.action.wireApps,
+                                 permanent: permanent,
+                                 note: ticket.note)
     }
 
     /// `mo analyze --json <path>` — read-only disk-usage tree. Passes
@@ -659,93 +708,6 @@ struct ToolCatalog {
         return out.isEmpty ? "{\"apps\":[]}" : out
     }
 
-    /// Shared driver for `clean` / `optimize`. Dry-run preview unless the
-    /// gate opens; on a blocked real request, says why instead of running.
-    private func runCleanup(command: String, baseArgs: [String], confirm: Bool) -> String {
-        if !confirm {
-            let res = Self.runMo(baseArgs + ["--dry-run"], timeout: 180)
-            return Self.actionResult(command: command, dryRun: true, ran: false, res: res)
-        }
-        guard Self.realActionAllowed(confirm: confirm, optedIn: Store.mcpActionsEnabled) else {
-            return Self.blockedResult(command: command)
-        }
-        // Not elevated: an MCP server can't safely field a sudo/Touch ID
-        // dialog, so a real run cleans what the user already owns and skips
-        // anything needing admin. The Burrow app does the elevated clean.
-        let res = Self.runMo(baseArgs, timeout: 600)
-        return Self.actionResult(command: command, dryRun: false, ran: res.exitCode == 0, res: res)
-    }
-
-    /// `mo uninstall [--permanent] <app>…`. Needs at least one app name.
-    private func callUninstall(_ args: [String: Any]) throws -> String {
-        let apps = (args["apps"] as? [String])?
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty } ?? []
-        guard !apps.isEmpty else {
-            throw MCPToolError.badArguments("uninstall needs `apps`: one or more app names (see burrow_list_apps)")
-        }
-        let confirm = (args["confirm"] as? Bool) ?? false
-        let permanent = (args["permanent"] as? Bool) ?? false
-        if !confirm {
-            let res = Self.runMo(["uninstall", "--dry-run"] + apps, timeout: 180)
-            return Self.actionResult(command: "uninstall", dryRun: true, ran: false, res: res,
-                                     extra: ["apps": apps])
-        }
-        guard Self.realActionAllowed(confirm: confirm, optedIn: Store.mcpActionsEnabled) else {
-            return Self.blockedResult(command: "uninstall", extra: ["apps": apps])
-        }
-        // Uninstall is irreversible-class (apps disappear; `permanent` even
-        // bypasses the Trash). The cleanup opt-in alone isn't consent for
-        // that — it needs the dedicated second switch.
-        guard Store.mcpIrreversibleEnabled else {
-            return Self.blockedResult(command: "uninstall", extra: [
-                "apps": apps,
-                "reason": "Uninstalls are off for agents. Real `mo uninstall` (and any permanent delete) additionally requires 'Also allow uninstalls & permanent deletes' in Burrow \u{25B8} Settings \u{25B8} Agent. A dry-run preview works without it.",
-            ])
-        }
-        // Pre-flight (audit H4, same interlock as the GUI): pin what mo's
-        // matcher resolves BEFORE answering its prompts. Divergent or
-        // unparseable output aborts — fail closed.
-        let dry = Self.runMo(["uninstall", "--dry-run"] + apps, stdin: "", timeout: 120)
-        guard let matchedApps = UninstallGuard.matchedApps(inDryRunOutput: dry.stdout + "\n" + dry.stderr) else {
-            return Self.jsonString(["command": "uninstall", "ran": false, "apps": apps,
-                                    "error": "aborted: couldn't verify which apps mo matched"])
-        }
-        if let mismatch = UninstallGuard.mismatchDescription(confirmed: apps, matched: matchedApps) {
-            return Self.jsonString(["command": "uninstall", "ran": false, "apps": apps,
-                                    "matched": matchedApps,
-                                    "error": "aborted: mo matched a different set than requested (\(mismatch)). Use exact names from burrow_list_apps."])
-        }
-        var moArgs = ["uninstall"]
-        if permanent { moArgs.append("--permanent") }
-        moArgs += apps
-        // mo uninstall is interactive ("Proceed? [y/N]" + "Enter confirm"); feed
-        // yes so it doesn't block forever on a non-TTY. The two Settings
-        // opt-ins + confirm:true + the dry-run match above are the gate.
-        let res = Self.runMo(moArgs, stdin: String(repeating: "y\n", count: 4), timeout: 600)
-        return Self.actionResult(command: "uninstall", dryRun: false, ran: res.exitCode == 0, res: res,
-                                 extra: ["apps": apps, "permanent": permanent])
-    }
-
-    /// `purge` / `installer` preview. Their REAL run is an interactive
-    /// checklist whose driver isn't wired into the MCP path — so we return
-    /// the `--dry-run` list, and on confirm:true add a note pointing at the
-    /// app. Honest and forward-compatible.
-    private func callInteractivePreview(command: String, arguments: [String: Any]) -> String {
-        let confirm = (arguments["confirm"] as? Bool) ?? false
-        let res = Self.runMo([command, "--dry-run"], timeout: 180)
-        let preview = Self.stripANSI(res.stdout.isEmpty ? res.stderr : res.stdout)
-        var obj: [String: Any] = [
-            "command": command, "dry_run": true, "ran": false,
-            "exit_code": Int(res.exitCode), "output": preview,
-        ]
-        if confirm {
-            obj["interactive_only"] = true
-            obj["note"] = "Real `mo \(command)` is an interactive selection flow — run it from the Burrow app. This is the preview."
-        }
-        return Self.jsonString(obj)
-    }
-
     // MARK: Action helpers
 
     /// Run `mo` with the given args, never throwing — a missing binary
@@ -753,28 +715,6 @@ struct ToolCatalog {
     private static func runMo(_ args: [String], stdin: String? = nil, timeout: TimeInterval) -> MoleCLI.Result {
         (try? MoleCLI.run(args: args, stdin: stdin, timeout: timeout))
             ?? MoleCLI.Result(stdout: "", stderr: "mo not found", exitCode: 127)
-    }
-
-    private static func actionResult(command: String, dryRun: Bool, ran: Bool,
-                                     res: MoleCLI.Result, extra: [String: Any] = [:]) -> String {
-        var obj: [String: Any] = [
-            "command": command,
-            "dry_run": dryRun,
-            "ran": ran,
-            "exit_code": Int(res.exitCode),
-            "output": stripANSI(res.stdout.isEmpty ? res.stderr : res.stdout),
-        ]
-        for (k, v) in extra { obj[k] = v }
-        return jsonString(obj)
-    }
-
-    private static func blockedResult(command: String, extra: [String: Any] = [:]) -> String {
-        var obj: [String: Any] = [
-            "command": command, "ran": false, "blocked": true,
-            "reason": "Real cleanups are off. Turn on 'Let agents run cleanups for real' in Burrow ▸ Settings, then retry with confirm:true. (A dry-run preview works without it.)",
-        ]
-        for (k, v) in extra { obj[k] = v }
-        return jsonString(obj)
     }
 
     /// Strip ANSI/VT100 escape sequences so mo's TUI coloring doesn't leak
