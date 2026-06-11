@@ -50,11 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // Product analytics + crash reporting (PostHog + Sentry). Opt-out and
-        // inert without release-injected keys. Started before the `mo` gate so
-        // a launch with the engine missing still counts — but never before
-        // the user has seen the one-time consent notice below.
-        ensureTelemetryConsent()
+        // Product analytics + crash reporting (PostHog + Sentry). Opt-out, on
+        // by default, and inert without release-injected keys. Started before
+        // the `mo` gate so a launch with the engine missing still counts.
         Telemetry.start()
 
         // No engine yet → guided install instead of a dead-end quit. The
@@ -65,27 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         startServices()
-    }
-
-    /// One-time first-launch notice (audit M9): telemetry is opt-out, but
-    /// the choice must be SEEN, not discoverable only via a Settings
-    /// footnote — and nothing may be sent before it. Keyless source/dev
-    /// builds skip the dialog (they can't send anything); the answer maps
-    /// straight onto the same switch Settings exposes.
-    private func ensureTelemetryConsent() {
-        guard Telemetry.hasReleaseKeys, !Store.telemetryNoticeAcknowledged else { return }
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Share anonymous usage & crash reports?", comment: "")
-        alert.informativeText = NSLocalizedString("""
-            Helps prioritize fixes: app/OS version, coarse bucketed feature counts, and crash traces. \
-            Never files, paths, file contents, or your metrics — the exact list is in TELEMETRY.md. \
-            You can change this anytime in Settings → Anonymous usage.
-            """, comment: "")
-        alert.addButton(withTitle: NSLocalizedString("Share", comment: ""))
-        alert.addButton(withTitle: NSLocalizedString("Don't Share", comment: ""))
-        NSApp.activate(ignoringOtherApps: true)
-        Store.telemetryEnabled = (alert.runModal() == .alertFirstButtonReturn)
-        Store.telemetryNoticeAcknowledged = true
     }
 
     /// Guided onboarding window when `mo` is missing. Stays a regular Dock

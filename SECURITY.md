@@ -56,9 +56,7 @@ This is the part people rightly scrutinize in cleaners. Burrow's model:
   reports scrub `/Users/<name>`), your home folder, your metrics/history, or
   any account identity. **Your IP isn't stored**, either — PostHog events
   carry `$ip = "0"` (and the project discards client IPs), and Sentry sets
-  `sendDefaultPii = false`. It's **on by default**, and release builds **ask
-  once at first launch** (nothing is sent before you answer); change it
-  anytime in **Settings → Anonymous
+  `sendDefaultPii = false`. It's **on by default**; turn it off in **Settings → Anonymous
   usage** and both PostHog and Sentry stop. The exact event list is in
   **[TELEMETRY.md](TELEMETRY.md)**; the client code is
   [`Sources/Telemetry.swift`](Sources/Telemetry.swift) and

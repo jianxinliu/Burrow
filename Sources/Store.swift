@@ -276,13 +276,6 @@ enum Store {
         set { write(newValue, "telemetry_enabled") }
     }
 
-    /// Whether the one-time first-launch telemetry notice has been shown
-    /// and answered (release builds only — keyless builds never ask).
-    static var telemetryNoticeAcknowledged: Bool {
-        get { d.object(forKey: "telemetry_notice_ack") as? Bool ?? false }
-        set { write(newValue, "telemetry_notice_ack") }
-    }
-
     // MARK: - History view
 
     /// Last-selected History view range, in minutes. Persisting it

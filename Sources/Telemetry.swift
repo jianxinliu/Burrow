@@ -39,16 +39,6 @@ enum Telemetry {
     /// warnings; every PostHog call below is gated on BOTH.
     private static var configured = false
 
-    /// Whether this build carries release-injected telemetry keys at all.
-    /// Used by the first-launch consent notice: a source/dev build can't
-    /// send anything, so it shouldn't ask.
-    static var hasReleaseKeys: Bool {
-        let info = Bundle.main.infoDictionary
-        let key = (info?["PHPostHogApiKey"] as? String) ?? ""
-        let dsn = (info?["SentryDSN"] as? String) ?? ""
-        return !key.isEmpty || !dsn.isEmpty
-    }
-
     /// The single opt-in switch, persisted in `Store`. Reused as the gate for
     /// both PostHog and Sentry.
     static var isEnabled: Bool {

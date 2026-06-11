@@ -23,11 +23,9 @@ reports to its own project instead.
 
 ## Ground rules (enforced in code, not just promised)
 
-- **Opt-out, on by default — and asked up front.** Release builds show a
-  one-time notice at first launch (Share / Don't Share) before anything is
-  sent; the answer sets the same switch — **Settings → Anonymous usage** —
-  that gates both SDKs (`Store.telemetryEnabled`). Off → PostHog is
-  hard-muted (`config.optOut`) and Sentry is `close()`d.
+- **Opt-out, on by default.** One switch — **Settings → Anonymous usage** —
+  gates both SDKs (`Store.telemetryEnabled`). Off → PostHog is hard-muted
+  (`config.optOut`) and Sentry is `close()`d.
 - **Inert without keys.** The PostHog key and Sentry DSN are injected only at
   release time (Info.plist `PHPostHogApiKey` / `SentryDSN`, from build
   settings). A build from this repo ships them empty and touches neither
