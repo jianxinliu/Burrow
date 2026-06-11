@@ -554,12 +554,12 @@ final class StatusModel: ObservableObject {
         var cpu: [Double] = [], mem: [Double] = [], gpu: [Double] = [], net: [Double] = []
         for stored in MetricsStore(db: db).snapshots(.init(since: since, until: now), maxPoints: 40).snapshots {
             let s = stored.status
-            cpu.append(s.cpu.usage)
-            mem.append(s.memory.usedPercent)
-            gpu.append(max(0, s.gpu?.first?.usage ?? 0))
-            let rx = s.network.reduce(0.0) { $0 + $1.rxRateMbs }
-            let tx = s.network.reduce(0.0) { $0 + $1.txRateMbs }
-            net.append(rx + tx)
+            if let v = Metric.cpuUsage.value(in: s) { cpu.append(v) }
+            if let v = Metric.memoryUsedPercent.value(in: s) { mem.append(v) }
+            // Honest gap when the platform can't report GPU — the table's
+            // rule, not a fake max(0, …) zero.
+            if let v = Metric.gpuUsage.value(in: s) { gpu.append(v) }
+            net.append((Metric.networkRx.value(in: s) ?? 0) + (Metric.networkTx.value(in: s) ?? 0))
         }
         cpuHist = cpu; memHist = mem; gpuHist = gpu; netHist = net
     }

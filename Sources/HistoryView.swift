@@ -123,30 +123,30 @@ private enum HistoryLoader {
         let snaps = store.snapshots(window).snapshots
         snap.rowCount = snaps.count
 
+        // Projection rules (gpu −1, thermal 0s, fan-count gating) live in
+        // the Metric table — this loop only decides which chart gets which
+        // metric. A nil projection appends nothing: a gap, never a fake 0.
         for stored in snaps {
             let s = stored.status
             let t = Date(timeIntervalSince1970: TimeInterval(stored.ts))
-            snap.cpuUsage.append(.init(time: t, value: s.cpu.usage))
-            snap.cpuLoad1.append(.init(time: t, value: s.cpu.load1))
-            snap.memoryUsed.append(.init(time: t, value: s.memory.usedPercent))
-            snap.diskRead.append(.init(time: t, value: s.diskIO.readRate))
-            snap.diskWrite.append(.init(time: t, value: s.diskIO.writeRate))
-            let rx = s.network.reduce(0.0) { $0 + $1.rxRateMbs }
-            let tx = s.network.reduce(0.0) { $0 + $1.txRateMbs }
-            snap.netRx.append(.init(time: t, value: rx))
-            snap.netTx.append(.init(time: t, value: tx))
-            if let thermal = s.thermal {
-                if thermal.cpuTemp > 0 { snap.thermalCPU.append(.init(time: t, value: thermal.cpuTemp)) }
-                if thermal.gpuTemp > 0 { snap.thermalGPU.append(.init(time: t, value: thermal.gpuTemp)) }
-                if let bt = thermal.batteryTemp, bt > 0 { snap.thermalBattery.append(.init(time: t, value: bt)) }
-                // Plot fan RPM whenever fans are detected — including 0 (parked),
-                // so an idle Mac shows a flat line, not "no samples".
-                if (thermal.fanCount ?? 0) > 0 { snap.fanSpeed.append(.init(time: t, value: Double(thermal.fanSpeed))) }
-                snap.fanCount = max(snap.fanCount, thermal.fanCount ?? 0)
+            func add(_ m: Metric, _ points: inout [ChartPoint]) {
+                if let v = m.value(in: s) { points.append(.init(time: t, value: v)) }
             }
-            if let b = s.batteries?.first { snap.batteryPercent.append(.init(time: t, value: b.percent)) }
-            if let g = s.gpu?.first, g.usage >= 0 { snap.gpuUsage.append(.init(time: t, value: g.usage)) }
-            snap.healthScore.append(.init(time: t, value: Double(s.healthScore)))
+            add(.cpuUsage, &snap.cpuUsage)
+            add(.cpuLoad1, &snap.cpuLoad1)
+            add(.memoryUsedPercent, &snap.memoryUsed)
+            add(.diskRead, &snap.diskRead)
+            add(.diskWrite, &snap.diskWrite)
+            add(.networkRx, &snap.netRx)
+            add(.networkTx, &snap.netTx)
+            add(.thermalCPU, &snap.thermalCPU)
+            add(.thermalGPU, &snap.thermalGPU)
+            add(.thermalBattery, &snap.thermalBattery)
+            add(.fanSpeed, &snap.fanSpeed)
+            add(.batteryPercent, &snap.batteryPercent)
+            add(.gpuUsage, &snap.gpuUsage)
+            add(.healthScore, &snap.healthScore)
+            snap.fanCount = max(snap.fanCount, s.thermal?.fanCount ?? 0)
             snap.memoryPressure = s.memory.pressure
         }
 

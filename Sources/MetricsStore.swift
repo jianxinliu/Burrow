@@ -60,6 +60,49 @@ struct SnapshotSlice {
     let firstSkip: DriftReport?
 }
 
+/// THE projection table: every chartable metric and how to read it out of
+/// a snapshot, once. `nil` means "no honest value at this instant" — the
+/// gpu −1 sentinel, unreadable thermal 0s, and the fan-count gate live
+/// here and nowhere else, so the views can't drift apart again.
+enum Metric: String, CaseIterable {
+    case cpuUsage, cpuLoad1, memoryUsedPercent, gpuUsage,
+         diskRead, diskWrite, networkRx, networkTx,
+         thermalCPU, thermalGPU, thermalBattery, fanSpeed, batteryPercent, healthScore
+
+    func value(in s: MoleStatus) -> Double? {
+        switch self {
+        case .cpuUsage: return s.cpu.usage
+        case .cpuLoad1: return s.cpu.load1
+        case .memoryUsedPercent: return s.memory.usedPercent
+        case .gpuUsage:
+            // −1 = the platform can't report utilisation; never chart it.
+            guard let g = s.gpu?.first, g.usage >= 0 else { return nil }
+            return g.usage
+        case .diskRead: return s.diskIO.readRate
+        case .diskWrite: return s.diskIO.writeRate
+        case .networkRx: return s.network.reduce(0.0) { $0 + $1.rxRateMbs }
+        case .networkTx: return s.network.reduce(0.0) { $0 + $1.txRateMbs }
+        case .thermalCPU:
+            // 0 = no unprivileged sensor; never synthesize thermal.
+            guard let t = s.thermal, t.cpuTemp > 0 else { return nil }
+            return t.cpuTemp
+        case .thermalGPU:
+            guard let t = s.thermal, t.gpuTemp > 0 else { return nil }
+            return t.gpuTemp
+        case .thermalBattery:
+            guard let b = s.thermal?.batteryTemp, b > 0 else { return nil }
+            return b
+        case .fanSpeed:
+            // No detected fan → no data; a detected fan at 0 RPM is parked,
+            // which IS data (an idle Mac charts a flat line, not a gap).
+            guard (s.thermal?.fanCount ?? 0) > 0 else { return nil }
+            return Double(s.thermal?.fanSpeed ?? 0)
+        case .batteryPercent: return s.batteries?.first?.percent
+        case .healthScore: return Double(s.healthScore)
+        }
+    }
+}
+
 struct MetricsStore {
     /// Bare-key prefix for persisted snapshots: one row per `mo status`
     /// invocation, value = the raw (natively patched) JSON payload. Owned by
@@ -200,6 +243,26 @@ struct MetricsStore {
         snapshots(w, maxPoints: maxPoints).snapshots.compactMap { s in
             read(s.status).map { (s.ts, $0) }
         }
+    }
+
+    /// Several metric series in ONE decode pass over the window, projected
+    /// through the `Metric` table, with the slice's drift readout attached.
+    struct SeriesBundle {
+        let series: [Metric: [(ts: Int, value: Double)]]
+        let droppedRows: Int
+        let firstSkip: DriftReport?
+    }
+
+    func series(of metrics: [Metric], _ w: Window, maxPoints: Int = 720) -> SeriesBundle {
+        let slice = snapshots(w, maxPoints: maxPoints)
+        var out: [Metric: [(ts: Int, value: Double)]] = [:]
+        for m in metrics { out[m] = [] }
+        for s in slice.snapshots {
+            for m in metrics {
+                if let v = m.value(in: s.status) { out[m]?.append((s.ts, v)) }
+            }
+        }
+        return SeriesBundle(series: out, droppedRows: slice.droppedRows, firstSkip: slice.firstSkip)
     }
 
     // MARK: Process aggregation

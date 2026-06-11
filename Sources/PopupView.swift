@@ -407,10 +407,11 @@ final class HUDModel: ObservableObject {
         var cpu: [Double] = [], mem: [Double] = [], net: [Double] = [], gpu: [Double] = []
         for stored in MetricsStore(db: db).snapshots(.init(since: now - 30 * 60, until: now), maxPoints: 30).snapshots {
             let s = stored.status
-            cpu.append(s.cpu.usage)
-            mem.append(s.memory.usedPercent)
-            net.append(s.network.reduce(0.0) { $0 + $1.rxRateMbs + $1.txRateMbs })
-            gpu.append(max(0, s.gpu?.first?.usage ?? 0))
+            if let v = Metric.cpuUsage.value(in: s) { cpu.append(v) }
+            if let v = Metric.memoryUsedPercent.value(in: s) { mem.append(v) }
+            net.append((Metric.networkRx.value(in: s) ?? 0) + (Metric.networkTx.value(in: s) ?? 0))
+            // Honest gap when the platform can't report GPU (table rule).
+            if let v = Metric.gpuUsage.value(in: s) { gpu.append(v) }
         }
         cpuHist = cpu; memHist = mem; netHist = net; gpuHist = gpu
     }
