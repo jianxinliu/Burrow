@@ -14,6 +14,7 @@
 //
 
 import Foundation
+import os
 
 /// A persisted snapshot: Mole's timestamp plus the decoded status.
 struct StoredSnapshot {
@@ -78,11 +79,20 @@ struct MetricsStore {
         }
     }
 
-    /// The most recent persisted snapshot, decoded.
+    /// How many newest rows `latest()` will try before giving up. Bounded
+    /// so a wholesale schema drift degrades to "no data", not a table scan.
+    static let latestFallbackDepth = 5
+
+    /// The most recent persisted snapshot, decoded. If the newest row fails
+    /// to decode (schema drift mid-stream), falls back through up to
+    /// `latestFallbackDepth` older rows — the HUD never blanks silently for
+    /// one bad row.
     func latest() -> StoredSnapshot? {
-        guard let row = db.findLatest(prefix: MetricsStore.snapshotPrefix),
-              let s = try? Self.dec.decode(MoleStatus.self, from: Data(row.json.utf8)) else { return nil }
-        return StoredSnapshot(ts: row.ts, status: s)
+        for row in db.findLatestRows(prefix: MetricsStore.snapshotPrefix,
+                                     limit: Self.latestFallbackDepth) {
+            if case .success(let s) = Self.decodeRow(row) { return s }
+        }
+        return nil
     }
 
     /// Decoded snapshots in the window, stride-sampled to at most `maxPoints`.
@@ -105,13 +115,39 @@ struct MetricsStore {
         return SnapshotSlice(snapshots: decoded, droppedRows: dropped, firstSkip: firstSkip)
     }
 
+    // MARK: Drift counters
+
+    /// Cumulative decode-skip observations for this process, plus the most
+    /// recent failure. Process-wide on purpose: the GUI and the `--mcp`
+    /// spawn each report what *they* observed, and `MetricsStore` itself is
+    /// a throwaway value over the DB handle with nowhere to keep state.
+    struct DriftCounters {
+        var decodeSkippedTotal = 0
+        var lastDrift: DriftReport?
+    }
+
+    private static let drift = OSAllocatedUnfairLock(initialState: DriftCounters())
+
+    static var driftCounters: DriftCounters { drift.withLock { $0 } }
+
+    static func resetDriftCounters() {
+        drift.withLock { $0 = DriftCounters() }
+    }
+
     /// Decode one stored row, classifying any failure into a DriftReport.
+    /// The single choke point every read goes through — a failure here is
+    /// what advances the process-wide drift counters.
     private static func decodeRow(_ row: DB.Row) -> Result<StoredSnapshot, DriftReport> {
         do {
             let s = try Self.dec.decode(MoleStatus.self, from: Data(row.json.utf8))
             return .success(StoredSnapshot(ts: row.ts, status: s))
         } catch {
-            return .failure(Self.classify(error, row: row))
+            let report = Self.classify(error, row: row)
+            drift.withLock {
+                $0.decodeSkippedTotal += 1
+                $0.lastDrift = report
+            }
+            return .failure(report)
         }
     }
 

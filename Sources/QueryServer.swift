@@ -212,12 +212,20 @@ final class QueryServer {
                 "age_seconds": r.ageSeconds.map { $0 as Any } ?? NSNull(),
             ])
         }
+        let counters = MetricsStore.driftCounters
         let payload: [String: Any] = [
             "now": now,
             "app": "Burrow",
             "port": self.port,
             "prefixes": statuses.map(\.prefix),
             "readers": readers,
+            // Drift visibility: how many stored rows this process has had
+            // to skip on read, and why the last one failed — so a blank
+            // chart always has a checkable cause.
+            "decode_skipped_total": counters.decodeSkippedTotal,
+            "last_drift": counters.lastDrift.map {
+                ["ts": $0.ts, "message": $0.message, "snippet": $0.snippet] as Any
+            } ?? NSNull(),
         ]
         return Self.jsonString(payload)
     }

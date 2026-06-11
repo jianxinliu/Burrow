@@ -515,7 +515,13 @@ struct ToolCatalog {
             let age = r.ageSeconds.map(String.init) ?? "null"
             pieces.append("{\"prefix\":\"\(r.prefix)\",\"latest_ts\":\(ts),\"age_seconds\":\(age)}")
         }
-        return "{\"now\":\(now),\"retention_days\":\(Store.retentionDays),\"sample_interval_seconds\":\(Store.sampleIntervalSeconds),\"readers\":[\(pieces.joined(separator: ","))]}"
+        // Drift visibility (mirrors GET /info): skipped-row count + the last
+        // failure, so "is data flowing?" has a one-call answer for agents.
+        let counters = MetricsStore.driftCounters
+        let lastDrift = counters.lastDrift.map {
+            Self.jsonString(["ts": $0.ts, "message": $0.message, "snippet": $0.snippet])
+        } ?? "null"
+        return "{\"now\":\(now),\"retention_days\":\(Store.retentionDays),\"sample_interval_seconds\":\(Store.sampleIntervalSeconds),\"decode_skipped_total\":\(counters.decodeSkippedTotal),\"last_drift\":\(lastDrift),\"readers\":[\(pieces.joined(separator: ","))]}"
     }
 
     /// Itemised cleanup history (issue #2). Passes through `mo history

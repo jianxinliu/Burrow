@@ -240,15 +240,26 @@ final class DB {
     /// Most recent row for a prefix, or nil. O(log N) via the (prefix, ts)
     /// PK — SQLite walks the index backwards from the prefix's upper bound.
     func findLatest(prefix: String) -> Row? {
+        findLatestRows(prefix: prefix, limit: 1).first
+    }
+
+    /// The newest `limit` rows for a prefix, newest first. Same index walk
+    /// as `findLatest`; the reader uses it to fall back past drifted rows.
+    func findLatestRows(prefix: String, limit: Int) -> [Row] {
+        guard limit > 0 else { return [] }
+        var rows: [Row] = []
         var stmt: OpaquePointer?
-        let sql = "SELECT ts, json FROM samples WHERE prefix=? ORDER BY ts DESC LIMIT 1;"
-        guard sqlite3_prepare_v2(self.handle, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        let sql = "SELECT ts, json FROM samples WHERE prefix=? ORDER BY ts DESC LIMIT ?;"
+        guard sqlite3_prepare_v2(self.handle, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, prefix, -1, SQLITE_TRANSIENT)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        let ts = Int(sqlite3_column_int64(stmt, 0))
-        let json = String(cString: sqlite3_column_text(stmt, 1))
-        return Row(ts: ts, json: json)
+        sqlite3_bind_int64(stmt, 2, Int64(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let ts = Int(sqlite3_column_int64(stmt, 0))
+            let json = String(cString: sqlite3_column_text(stmt, 1))
+            rows.append(Row(ts: ts, json: json))
+        }
+        return rows
     }
 
     /// All rows for `prefix` in `[since, until]` (inclusive). Returned in

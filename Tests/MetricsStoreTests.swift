@@ -25,6 +25,7 @@ final class MetricsStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         db = try DB(at: tempDir.appendingPathComponent("burrow.db"))
         store = MetricsStore(db: db)
+        MetricsStore.resetDriftCounters()
     }
 
     override func tearDown() {
@@ -59,6 +60,26 @@ final class MetricsStoreTests: XCTestCase {
         try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 100, json: snapshotJSON(cpu: 10))
         try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 200, json: snapshotJSON(cpu: 80))
         XCTAssertEqual(Int(store.latest()?.status.cpu.usage ?? -1), 80)
+    }
+
+    func testLatest_fallsBackThroughDriftedRows() throws {
+        // Newest row drifted → the HUD must not blank; fall back to the
+        // previous good row instead.
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 100, json: snapshotJSON(cpu: 10))
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 200, json: "not valid json")
+        let s = try XCTUnwrap(store.latest())
+        XCTAssertEqual(s.ts, 100)
+        XCTAssertEqual(Int(s.status.cpu.usage), 10)
+    }
+
+    func testLatest_fallbackIsBoundedToFiveRows() throws {
+        // A good row buried under five drifted ones is out of reach — the
+        // fallback is a bounded rescue, not an unbounded table scan.
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 50, json: snapshotJSON(cpu: 10))
+        for t in 100...104 {
+            try db.insert(prefix: MetricsStore.snapshotPrefix, ts: t, json: "drifted")
+        }
+        XCTAssertNil(store.latest())
     }
 
     // MARK: Ranged snapshots
@@ -118,6 +139,24 @@ final class MetricsStoreTests: XCTestCase {
         let slice = store.snapshots(MetricsStore.Window(since: 0, until: 1000))
         XCTAssertEqual(slice.droppedRows, 0)
         XCTAssertNil(slice.firstSkip)
+    }
+
+    func testDriftCounters_accumulateAcrossReadsAndKeepLastReport() throws {
+        XCTAssertEqual(MetricsStore.driftCounters.decodeSkippedTotal, 0)
+        XCTAssertNil(MetricsStore.driftCounters.lastDrift)
+
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 100, json: "not valid json")
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: 200, json: snapshotJSON(cpu: 50))
+
+        _ = store.snapshots(MetricsStore.Window(since: 0, until: 1000))
+        _ = store.snapshots(MetricsStore.Window(since: 0, until: 1000))
+
+        // Counts decode-skip OBSERVATIONS (per read), the cheap honest
+        // signal that something has been wrong and for how long.
+        let counters = MetricsStore.driftCounters
+        XCTAssertEqual(counters.decodeSkippedTotal, 2)
+        XCTAssertEqual(counters.lastDrift?.kind, .notJSON)
+        XCTAssertEqual(counters.lastDrift?.ts, 100)
     }
 
     func testWindowLastMinutes_computesBounds() {

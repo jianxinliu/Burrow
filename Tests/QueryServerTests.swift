@@ -132,4 +132,25 @@ final class QueryServerTests: XCTestCase {
         XCTAssertTrue(res.contains("{\"v\":2}"))
         XCTAssertFalse(res.contains("{\"v\":9}"), "other prefixes must not bleed into the slice")
     }
+
+    // Drift counters ride along on /info so a blank chart always has a
+    // visible cause an agent (or curl) can see.
+    func testRoute_infoSurfacesDriftCounters() throws {
+        MetricsStore.resetDriftCounters()
+        let clean = server.route("GET /info HTTP/1.1\r\n\r\n")
+        let cleanObj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(clean.utf8)) as? [String: Any])
+        XCTAssertEqual(cleanObj["decode_skipped_total"] as? Int, 0)
+        XCTAssertTrue(cleanObj["last_drift"] is NSNull, "no drift yet → explicit null")
+
+        let now = Int(Date().timeIntervalSince1970)
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now, json: "not valid json")
+        _ = MetricsStore(db: db).snapshots(.init(since: 0, until: now + 1))
+
+        let drifted = server.route("GET /info HTTP/1.1\r\n\r\n")
+        let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(drifted.utf8)) as? [String: Any])
+        XCTAssertEqual(obj["decode_skipped_total"] as? Int, 1)
+        let last = try XCTUnwrap(obj["last_drift"] as? [String: Any])
+        XCTAssertEqual(last["ts"] as? Int, now)
+        XCTAssertNotNil(last["message"] as? String)
+    }
 }
