@@ -48,6 +48,7 @@ struct DiskScanResult {
 
 enum DiskScanError: Error, LocalizedError {
     case moNotFound
+    case moTooOld(found: String?)
     case moFailed(exitCode: Int32, stderr: String)
     case parseFailed(String)
 
@@ -55,6 +56,12 @@ enum DiskScanError: Error, LocalizedError {
         switch self {
         case .moNotFound:
             return NSLocalizedString("Mole CLI (`mo`) not found on PATH.", comment: "")
+        case .moTooOld(let found):
+            return String(format: NSLocalizedString(
+                "Disk analysis needs Mole %@ or newer (you have %@). Run `brew upgrade mole`, then try again.",
+                comment: ""),
+                MoleCLI.minimumAnalyzeJSONVersion,
+                found ?? NSLocalizedString("an unknown version", comment: ""))
         case .moFailed(let code, let stderr):
             return String(format: NSLocalizedString("mo analyze exited %d: %@", comment: ""),
                           code, String(stderr.prefix(200)))
@@ -78,12 +85,25 @@ enum DiskScanner {
         // indexing can stretch it. Beyond 5 min something's wrong.
         let result = try MoleCLI.run(args: ["analyze", "--json", path], timeout: 300)
         guard result.exitCode == 0 else {
+            if indicatesMissingJSONSupport(stderr: result.stderr) {
+                throw DiskScanError.moTooOld(found: MoleCLI.version())
+            }
             throw DiskScanError.moFailed(exitCode: result.exitCode, stderr: result.stderr)
         }
         guard let data = result.stdout.data(using: .utf8) else {
             throw DiskScanError.parseFailed("non-utf8 stdout")
         }
         return try Self.parse(data)
+    }
+
+    /// Pre-1.29 Mole doesn't know `analyze --json`: depending on vintage
+    /// it either rejects the flag (Go's "flag provided but not defined")
+    /// or ignores it and launches the TUI, which dies opening /dev/tty
+    /// under a GUI parent ("could not open a new TTY", #35). Both mean
+    /// the same thing for us: the user must upgrade mole. Pure → tested.
+    static func indicatesMissingJSONSupport(stderr: String) -> Bool {
+        stderr.contains("could not open a new TTY")
+            || stderr.contains("flag provided but not defined")
     }
 
     // MARK: - Parsing

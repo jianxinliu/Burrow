@@ -638,6 +638,12 @@ struct ToolCatalog {
         // 300 s like DiskScanner — analyze on a home dir can take a while.
         let res = Self.runMo(["analyze", "--json", path], timeout: 300)
         guard res.exitCode == 0 else {
+            if DiskScanner.indicatesMissingJSONSupport(stderr: res.stderr) {
+                return Self.jsonString([
+                    "error": "installed mole is too old for `analyze --json` " +
+                             "(needs >= \(MoleCLI.minimumAnalyzeJSONVersion)); run `brew upgrade mole`",
+                    "path": path])
+            }
             return Self.jsonString(["error": "mo analyze failed",
                                     "path": path,
                                     "stderr": Self.stripANSI(res.stderr)])

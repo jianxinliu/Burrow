@@ -78,6 +78,12 @@ enum MoleCLI {
         return nil
     }
 
+    /// Oldest Mole whose `analyze` knows `--json` (added in V1.29.0,
+    /// explicitly "for non-TTY environments"). Older versions launch the
+    /// TUI instead, which opens /dev/tty and dies when the parent is a
+    /// GUI app with no controlling terminal (#35).
+    static let minimumAnalyzeJSONVersion = "1.29.0"
+
     /// Modal alert shown at launch when `mo` isn't installed. We block on
     /// it because there's nothing useful Burrow can do without Mole, and a
     /// background app silently failing is the worst possible UX for this
