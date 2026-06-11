@@ -49,7 +49,7 @@ jobs:
       # Pinned to a commit SHA, not a floating tag: this job holds
       # contents:write, the signing cert, and TAP_PAT, so a moved tag must
       # not be able to run new code here. Comment keeps the version legible.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       # Use the newest Xcode on the runner so xcodebuild can read the project
       # format xcodegen emits (Homebrew's xcodegen targets the latest Xcode).
