@@ -232,8 +232,28 @@ struct SystemProcessPort: ProcessPort {
         AsyncStream { cont in
             let splitter = LineSplitter()
             let t = Process()
+            // One serial queue owns every splitter access, line yield, and the
+            // final finish — so `cont.finish()` can never overtake a still-
+            // pending `.line` from a reader. (The old readabilityHandler yielded
+            // on a background queue while the termination handler finished on
+            // main; with no ordering between them, finish() could land first and
+            // silently drop lines — an intermittent CI failure that surfaced as
+            // [] or ["a"] instead of ["a","b"].)
+            let streamQ = DispatchQueue(label: "dev.caezium.burrow.opflow.stream")
             var tailTimer: Timer?
             var logHandle: FileHandle?
+            var killTimer: DispatchSourceTimer?
+
+            func emit(_ s: String) {                       // streamQ only
+                for line in splitter.ingest(Ansi.strip(s)) { cont.yield(.line(line)) }
+            }
+            func finish(_ code: Int32) {                   // streamQ only
+                for line in splitter.flush() { cont.yield(.line(line)) }
+                cont.yield(.exited(code))
+                cont.finish()
+            }
+
+            let outPipe = Pipe(), errPipe = Pipe()
 
             if spec.elevated {
                 // The osascript `do shell script` wrapper has no stdin channel,
@@ -249,8 +269,8 @@ struct SystemProcessPort: ProcessPort {
                                                     args: spec.arguments, redirectTo: logPath)
                 t.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
                 t.arguments = ["-e", script]
-                t.standardOutput = Pipe()
-                t.standardError = Pipe()
+                t.standardOutput = outPipe
+                t.standardError = errPipe
 
                 let handle = FileHandle(forReadingAtPath: logPath)
                 logHandle = handle
@@ -258,70 +278,33 @@ struct SystemProcessPort: ProcessPort {
                     guard let h = handle else { return }
                     let data = h.readDataToEndOfFile()
                     guard !data.isEmpty, let s = String(data: data, encoding: .utf8) else { return }
-                    for line in splitter.ingest(Ansi.strip(s)) { cont.yield(.line(line)) }
+                    streamQ.async { emit(s) }
                 }
                 RunLoop.main.add(timer, forMode: .common)
                 tailTimer = timer
+
+                t.terminationHandler = { proc in
+                    killTimer?.cancel()
+                    DispatchQueue.main.async { tailTimer?.invalidate() }
+                    streamQ.async {
+                        if let h = logHandle {                  // last tail of the log
+                            let data = h.readDataToEndOfFile()
+                            if !data.isEmpty, let s = String(data: data, encoding: .utf8) { emit(s) }
+                            try? h.close()
+                        }
+                        finish(proc.terminationStatus)
+                    }
+                }
             } else {
                 t.executableURL = URL(fileURLWithPath: spec.executable)
                 t.arguments = spec.arguments
-                let outPipe = Pipe(), errPipe = Pipe()
                 t.standardOutput = outPipe
                 t.standardError = errPipe
-                let handler: @Sendable (FileHandle) -> Void = { h in
-                    let d = h.availableData
-                    guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
-                    for line in splitter.ingest(Ansi.strip(s)) { cont.yield(.line(line)) }
-                }
-                outPipe.fileHandleForReading.readabilityHandler = handler
-                errPipe.fileHandleForReading.readabilityHandler = handler
-
                 if let stdin = spec.stdin {
                     let inPipe = Pipe()
                     t.standardInput = inPipe
                     inPipe.fileHandleForWriting.write(Data(stdin.utf8))
                     inPipe.fileHandleForWriting.closeFile()
-                }
-            }
-
-            // Declared before the termination handler so the handler's
-            // capture (of the variable box) retains the timer — an
-            // unreferenced DispatchSource is deallocated before it fires.
-            var killTimer: DispatchSourceTimer?
-
-            t.terminationHandler = { proc in
-                killTimer?.cancel()
-                let outPipe = proc.standardOutput as? Pipe
-                let errPipe = proc.standardError as? Pipe
-                outPipe?.fileHandleForReading.readabilityHandler = nil
-                errPipe?.fileHandleForReading.readabilityHandler = nil
-                DispatchQueue.main.async {
-                    tailTimer?.invalidate()
-                    if let h = logHandle {
-                        // Elevated: tail the temp log one last time.
-                        let data = h.readDataToEndOfFile()
-                        if !data.isEmpty, let s = String(data: data, encoding: .utf8) {
-                            for line in splitter.ingest(Ansi.strip(s)) { cont.yield(.line(line)) }
-                        }
-                        try? h.close()
-                    } else {
-                        // Non-elevated: the readabilityHandler is best-effort and
-                        // can miss the final chunk of a process that prints then
-                        // exits immediately (e.g. `printf …; exit`) — the handler
-                        // is nil'd above before that chunk is delivered. Drain
-                        // whatever's left so the last line isn't dropped (this was
-                        // an intermittent CI failure: got ["a"], expected ["a","b"]).
-                        for pipe in [outPipe, errPipe] {
-                            guard let pipe else { continue }
-                            let rest = pipe.fileHandleForReading.readDataToEndOfFile()
-                            if !rest.isEmpty, let s = String(data: rest, encoding: .utf8) {
-                                for line in splitter.ingest(Ansi.strip(s)) { cont.yield(.line(line)) }
-                            }
-                        }
-                    }
-                    for line in splitter.flush() { cont.yield(.line(line)) }
-                    cont.yield(.exited(proc.terminationStatus))
-                    cont.finish()
                 }
             }
 
@@ -341,9 +324,31 @@ struct SystemProcessPort: ProcessPort {
                     k.resume()
                     killTimer = k
                 }
+                if !spec.elevated {
+                    // Dedicated blocking reader per pipe, started only after a
+                    // successful spawn (so a failed launch can't leak them).
+                    // Each drains its pipe to EOF; ingest+yield hop synchronously
+                    // onto streamQ; completion fires via the group ONLY once both
+                    // pipes are at EOF — so finish() is strictly last and no line
+                    // is lost (see streamQ note above).
+                    let group = DispatchGroup()
+                    for fh in [outPipe.fileHandleForReading, errPipe.fileHandleForReading] {
+                        group.enter()
+                        DispatchQueue.global(qos: .utility).async {
+                            while case let d = fh.availableData, !d.isEmpty {
+                                if let s = String(data: d, encoding: .utf8) { streamQ.sync { emit(s) } }
+                            }
+                            group.leave()
+                        }
+                    }
+                    group.notify(queue: streamQ) {
+                        killTimer?.cancel()
+                        t.waitUntilExit()
+                        finish(t.terminationStatus)
+                    }
+                }
             } catch {
-                cont.yield(.exited(127))
-                cont.finish()
+                streamQ.async { finish(127) }
             }
         }
     }

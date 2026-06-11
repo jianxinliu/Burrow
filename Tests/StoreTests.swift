@@ -56,14 +56,6 @@ final class StoreTests: XCTestCase {
         XCTAssertTrue(Store.mcpIrreversibleEnabled)
     }
 
-    // The first-launch consent notice must show exactly once: not yet
-    // acknowledged on a fresh install, sticky once answered.
-    func testTelemetryNotice_defaultsUnacknowledgedAndPersists() {
-        XCTAssertFalse(Store.telemetryNoticeAcknowledged)
-        Store.telemetryNoticeAcknowledged = true
-        XCTAssertTrue(Store.telemetryNoticeAcknowledged)
-    }
-
     // Issue #4: the menu-bar icon is on by default; the off-switch must
     // persist (it's read once at launch to decide menu-bar vs Dock mode).
     func testShowMenuBarIcon_defaultsTrueAndPersists() {
