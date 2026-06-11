@@ -69,14 +69,16 @@ enum CrashReporter {
             options.enableCaptureFailedRequests = false
             options.enableAutoBreadcrumbTracking = false
             options.enableMetrics = false
-            // App-hang (ANR) detection counts ANY ≥2 s main-thread block as an
-            // "App Hanging" error — including legitimate modal dialogs
-            // (NSAlert.runModal for Clean/Optimize/uninstall confirms, the FDA
-            // gate, Touch ID), which block the run loop while the user reads
-            // them. That produced escalating false-positive "App Hanging" issues
-            // in Sentry, and it's an ANR/performance signal, not the crash/error
-            // scope TELEMETRY.md promises. Off.
-            options.enableAppHangTracking = false
+            // App-hang (ANR) detection stays ON (SDK default). For a
+            // disk-I/O- and render-heavy app a ≥2 s main-thread freeze is a
+            // real defect, not noise — it's how we caught a genuine SwiftUI
+            // layout hang in the Analyze treemap (Sentry BURROW-1/2). The
+            // earlier worry was that modal confirms (NSAlert.runModal, Touch
+            // ID) would trip false positives, but the reported hangs were all
+            // in the render path, not modals. If a specific modal ever does
+            // trip one, wrap that call site in
+            // SentrySDK.pauseAppHangTracking()/resumeAppHangTracking() rather
+            // than disabling detection app-wide.
             // Binary-image and frame paths embed /Users/<name>/… whenever
             // the app runs from Downloads or a home-dir checkout (the normal
             // case for an unsigned zip). Scrub the username; the rest of the

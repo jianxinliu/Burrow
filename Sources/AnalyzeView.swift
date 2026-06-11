@@ -204,9 +204,18 @@ struct TreemapView: View {
             let shown = Array(entries.filter { $0.size > 0 }.prefix(120))
             let rects = Treemap.layout(weights: shown.map { Double($0.size) },
                                        in: CGRect(x: 0, y: 0, width: geo.size.width, height: geo.size.height))
-            ZStack {
-                ForEach(Array(shown.enumerated()), id: \.element.id) { i, e in
-                    block(e, rects[i], color: Self.palette[i % Self.palette.count], isHover: hoveredID == e.id)
+            // One immediate-mode draw pass, not 120 nested SwiftUI cells. The
+            // old ZStack-of-views version re-ran the layout engine over the
+            // whole cell tree on every hover tick (onContinuousHover →
+            // hoveredID → body re-eval), which froze the main thread ≥2 s on
+            // large maps — a real, escalating app-hang on both Intel and
+            // Apple Silicon (Sentry BURROW-1/2). A Canvas redraw is a single
+            // cheap pass, and hit-testing already runs off the `rects` array,
+            // so the cells never needed to be real views.
+            Canvas { ctx, _ in
+                for (i, e) in shown.enumerated() where i < rects.count {
+                    drawCell(e, rects[i], color: Self.palette[i % Self.palette.count],
+                             isHover: hoveredID == e.id, into: ctx)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -220,45 +229,61 @@ struct TreemapView: View {
                 case .ended:          hoveredID = nil
                 }
             }
+            // Click-to-drill maps the tap point back to a cell via the same
+            // rects; the context menu acts on whatever the cursor hovers
+            // (a right-click hovers the cell first), so both behaviors survive
+            // the move off per-cell views.
+            .gesture(SpatialTapGesture().onEnded { v in
+                if let e = zip(shown, rects).first(where: { $0.1.contains(v.location) })?.0 { onOpen(e) }
+            })
+            .contextMenu {
+                if let id = hoveredID, let e = shown.first(where: { $0.id == id }) {
+                    Button(NSLocalizedString("Reveal in Finder", comment: "")) { AnalyzeIcons.reveal(e.path) }
+                    if e.isDir { Button(NSLocalizedString("Open here", comment: "")) { onOpen(e) } }
+                    Divider()
+                    Button(NSLocalizedString("Move to Trash", comment: ""), role: .destructive) { onTrash(e) }
+                }
+            }
         }
     }
 
-    @ViewBuilder
-    private func block(_ e: DiskScanEntry, _ r: CGRect, color: Color, isHover: Bool) -> some View {
-        let w = max(0, r.width - 2)
-        let h = max(0, r.height - 2)
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-            .fill(LinearGradient(colors: [color.opacity(isHover ? 0.95 : 0.8), color.opacity(isHover ? 0.7 : 0.55)],
-                                 startPoint: .top, endPoint: .bottom))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(isHover ? Color.white.opacity(0.6) : Color.black.opacity(0.25), lineWidth: 1))
-            .overlay(label(e, w: w, h: h))
-            .frame(width: w, height: h)
-            // `.position` (not `.offset`) so each cell's hit-test region tracks
-            // its drawn rect — `.offset` left hit-testing at the layout origin,
-            // which both lit the wrong square AND made only the first cell
-            // clickable.
-            .position(x: r.midX, y: r.midY)
-            .onTapGesture { onOpen(e) }
-            .contextMenu {
-                Button(NSLocalizedString("Reveal in Finder", comment: "")) { AnalyzeIcons.reveal(e.path) }
-                if e.isDir { Button(NSLocalizedString("Open here", comment: "")) { onOpen(e) } }
-                Divider()
-                Button(NSLocalizedString("Move to Trash", comment: ""), role: .destructive) { onTrash(e) }
-            }
-    }
+    /// Draw one treemap cell into the shared Canvas context: rounded gradient
+    /// fill, border, and — if the cell is large enough — an icon + name + size
+    /// label clipped to the cell. Mirrors the old per-cell view 1:1.
+    private func drawCell(_ e: DiskScanEntry, _ r: CGRect, color: Color, isHover: Bool, into ctx: GraphicsContext) {
+        let cell = r.insetBy(dx: 1, dy: 1)   // 2px gutter between cells
+        guard cell.width > 1, cell.height > 1 else { return }
+        let path = Path(roundedRect: cell, cornerRadius: 4, style: .continuous)
+        ctx.fill(path, with: .linearGradient(
+            Gradient(colors: [color.opacity(isHover ? 0.95 : 0.8),
+                              color.opacity(isHover ? 0.7 : 0.55)]),
+            startPoint: CGPoint(x: cell.midX, y: cell.minY),
+            endPoint: CGPoint(x: cell.midX, y: cell.maxY)))
+        ctx.stroke(path, with: .color(isHover ? .white.opacity(0.6) : .black.opacity(0.25)), lineWidth: 1)
 
-    @ViewBuilder
-    private func label(_ e: DiskScanEntry, w: CGFloat, h: CGFloat) -> some View {
-        if w > 66, h > 28 {
-            VStack(spacing: 2) {
-                if w > 96, h > 52 {
-                    Image(systemName: e.isDir ? "folder.fill" : "doc.fill")
-                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.9))
-                }
-                Text(e.name).font(Brand.sans(11, .medium)).foregroundStyle(.white).lineLimit(1)
-                Text(Fmt.bytes(e.size)).font(Brand.mono(9)).foregroundStyle(.white.opacity(0.85))
-            }
-            .padding(4).shadow(color: .black.opacity(0.4), radius: 2)
+        guard cell.width > 66, cell.height > 28 else { return }
+        var label = ctx
+        label.clip(to: path)
+        label.addFilter(.shadow(color: .black.opacity(0.4), radius: 2))
+
+        var lines: [GraphicsContext.ResolvedText] = []
+        if cell.width > 96, cell.height > 52 {
+            lines.append(label.resolve(Text(Image(systemName: e.isDir ? "folder.fill" : "doc.fill"))
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.9))))
+        }
+        lines.append(label.resolve(Text(e.name).font(Brand.sans(11, .medium)).foregroundStyle(.white)))
+        lines.append(label.resolve(Text(Fmt.bytes(e.size)).font(Brand.mono(9)).foregroundStyle(.white.opacity(0.85))))
+
+        // Measure single-line (generous width) and stack centered; the clip
+        // above trims any overflow, matching the old `.lineLimit(1)` cell.
+        let probe = CGSize(width: 4000, height: cell.height)
+        let sizes = lines.map { $0.measure(in: probe) }
+        let gap: CGFloat = 2
+        let totalH = sizes.reduce(0) { $0 + $1.height } + gap * CGFloat(max(0, lines.count - 1))
+        var y = cell.midY - totalH / 2
+        for (line, sz) in zip(lines, sizes) {
+            label.draw(line, at: CGPoint(x: cell.midX, y: y + sz.height / 2), anchor: .center)
+            y += sz.height + gap
         }
     }
 }
