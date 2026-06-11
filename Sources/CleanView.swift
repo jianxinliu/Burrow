@@ -82,16 +82,22 @@ struct CleanView: View {
     /// Dry-run scans are flood-prone without Full Disk Access — the gate in
     /// the descriptor diverts to FullDiskAccessRequired, where the user
     /// either grants FDA or picks "Scan with admin" (root bypasses TCC).
+    /// Argv and the FDA requirement come from the shared action catalog.
     private func startDry() {
         mode = .dry
-        flow.start(.moleStream(["clean", "--dry-run"],
-                               gate: .fullDiskAccess(adminBypass: true),
+        flow.start(.moleStream(MoAction.clean.argv(.preview),
+                               gate: MoAction.clean.spec.previewNeedsFDA
+                                   ? .fullDiskAccess(adminBypass: true) : .none,
                                label: NSLocalizedString("Scanning caches", comment: "")))
     }
 
-    /// The real clean already runs elevated (root), so it never triggers the
-    /// flood — no gate needed here.
+    /// The dialog stays in the view; the POLICY (real clean needs explicit
+    /// confirmation, then runs elevated) is the shared decide truth table —
+    /// the same one the MCP server consults.
     private func confirmReal() {
+        guard case .needsConfirmation = MoActions.decide(.clean, .real, .gui(hasFullDiskAccess: true)) else {
+            return
+        }
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("Clean caches for real?", comment: "")
         alert.informativeText = NSLocalizedString("Burrow will run `mo clean` with administrator rights. Cache files are removed permanently; Mole's whitelist and safety rules still apply.", comment: "")
@@ -99,8 +105,10 @@ struct CleanView: View {
         alert.addButton(withTitle: NSLocalizedString("Clean", comment: ""))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard case .run(let ticket) = MoActions.decide(
+            .clean, .real, .gui(hasFullDiskAccess: true, userConfirmed: true)) else { return }
         mode = .real
-        flow.start(.moleStream(["clean"], elevated: true,
+        flow.start(.moleStream(ticket.command.args, elevated: ticket.command.elevated,
                                label: NSLocalizedString("Cleaning caches", comment: "")))
     }
 }

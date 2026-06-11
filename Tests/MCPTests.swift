@@ -305,14 +305,8 @@ final class MCPTests: XCTestCase {
 
     // MARK: - Action tools (the gate)
 
-    // The whole safety model: a real (deleting) run needs BOTH the per-call
-    // confirm AND the user's opt-in. Neither alone is enough.
-    func testRealActionAllowed_needsBothConfirmAndOptIn() {
-        XCTAssertTrue(ToolCatalog.realActionAllowed(confirm: true, optedIn: true))
-        XCTAssertFalse(ToolCatalog.realActionAllowed(confirm: true, optedIn: false))
-        XCTAssertFalse(ToolCatalog.realActionAllowed(confirm: false, optedIn: true))
-        XCTAssertFalse(ToolCatalog.realActionAllowed(confirm: false, optedIn: false))
-    }
+    // (The decide() truth table in MoActionsTests is the safety model now —
+    // realActionAllowed and its four-cell test collapsed into it.)
 
     // confirm:true with the Settings opt-in OFF must NOT run mo — it must
     // short-circuit to a blocked result (no deletion attempted).

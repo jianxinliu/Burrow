@@ -46,17 +46,21 @@ struct OptimizeView: View {
         }
     }
 
-    /// Optimize already runs elevated (root) → no flood, no gate.
+    /// Per the shared truth table, optimize needs no separate dialog — the
+    /// admin auth prompt IS the consent — and the ticket runs elevated.
     private func runOptimize() {
+        guard case .run(let ticket) = MoActions.decide(
+            .optimize, .real, .gui(hasFullDiskAccess: true)) else { return }
         preview = false
-        flow.start(.moleStream(["optimize"], elevated: true,
+        flow.start(.moleStream(ticket.command.args, elevated: ticket.command.elevated,
                                label: NSLocalizedString("Optimizing", comment: "")))
     }
 
     private func runPreview() {
         preview = true
-        flow.start(.moleStream(["optimize", "--dry-run"],
-                               gate: .fullDiskAccess(adminBypass: true),
+        flow.start(.moleStream(MoAction.optimize.argv(.preview),
+                               gate: MoAction.optimize.spec.previewNeedsFDA
+                                   ? .fullDiskAccess(adminBypass: true) : .none,
                                label: NSLocalizedString("Optimize preview", comment: "")))
     }
 }
