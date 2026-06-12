@@ -3,7 +3,7 @@
 //  Burrow / Components
 //
 //  Inline sparkline with two looks: `.area` (filled gradient under a
-//  line — memory, network, gpu) and `.bars` (discrete columns — CPU).
+//  line — memory, network, fan) and `.bars` (discrete columns — CPU, GPU).
 //  No axes, no labels: just the recent shape of a number. Pure `Path`
 //  rendering so it stays crisp at ~30 px tall where SwiftUI Charts'
 //  margins would eat everything.

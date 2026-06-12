@@ -235,7 +235,7 @@ struct PopupView: View {
             ValueTile(variant: .hud, eyebrow: "GPU", glyph: "cpu.fill", accent: Brand.orange,
                       value: gpuValue(s).0, unit: gpuValue(s).1,
                       chip: (s.thermal?.gpuTemp).flatMap { $0 > 0 ? (String(format: "%.0f°C", $0), Brand.orange) : nil },
-                      values: model.gpuHist, chartStyle: .area,
+                      values: model.gpuHist, chartStyle: .bars,
                       footnote: (s.gpu?.first?.name ?? "GPU").replacingOccurrences(of: "Apple ", with: ""))
             ValueTile(variant: .hud, eyebrow: "Memory", glyph: "memorychip", accent: Brand.amber,
                       value: String(format: "%.0f", s.memory.usedPercent), unit: "%",

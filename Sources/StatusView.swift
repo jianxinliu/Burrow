@@ -117,7 +117,7 @@ struct StatusView: View {
             eyebrow: "GPU", glyph: "cpu.fill", accent: Brand.orange,
             value: hasUsage ? String(format: "%.0f", g!.usage) : "—",
             unit: hasUsage ? "%" : "",
-            chip: chip, values: model.gpuHist, chartStyle: .area,
+            chip: chip, values: model.gpuHist, chartStyle: .bars,
             footnote: cores > 0 ? "\(name) · \(cores) cores" : name)
     }
 
