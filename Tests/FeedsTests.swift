@@ -146,6 +146,32 @@ final class FeedsTests: XCTestCase {
                        "1 Hz polling over an unchanged row must cause zero invalidations")
         feed.detach()
     }
+
+    /// Suppression must not survive a failure: success → fail → identical
+    /// success has to land back in .ready, or the feed reports a stale
+    /// failure forever while fetches are healthy.
+    func testRecoveryAfterFailure_republishesEvenWithIdenticalToken() async {
+        let script = ScriptedFetch([.success(1), .failure, .success(1)])
+        let feed: Feed<Int> = hub.feed("recover", cadence: 2,
+                                       changeToken: { AnyHashable($0) }) { script.next() }
+        feed.attach()
+        await settle()
+        XCTAssertEqual(feed.value, 1)
+
+        clock.advance()
+        await settle()
+        guard case .failed = feed.phase else {
+            return XCTFail("expected .failed after the flaky tick, got \(feed.phase)")
+        }
+
+        clock.advance()
+        await settle()
+        guard case .ready(let v) = feed.phase else {
+            return XCTFail("a healthy fetch must return the feed to .ready even when the value is unchanged — got \(feed.phase)")
+        }
+        XCTAssertEqual(v, 1)
+        feed.detach()
+    }
 }
 
 // MARK: - Test plumbing

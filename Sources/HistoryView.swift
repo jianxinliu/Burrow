@@ -295,7 +295,7 @@ struct HistoryView: View {
             if let s = snapshot.staleSeconds {
                 Text(String(format: NSLocalizedString("· latest %ds ago", comment: ""), s)).font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
             }
-            Button { board?.refresh() } label: {
+            Button { loading = true; board?.refresh() } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Brand.textSecondary)
             }.buttonStyle(.plain).keyboardShortcut("r", modifiers: .command)

@@ -195,6 +195,10 @@ final class Feed<Value>: ObservableObject {
     private func apply(_ result: Value?) {
         guard let v = result else {
             phase = .failed(stale: value)             // degrade, don't blank
+            // A failure invalidates the suppression token: the next healthy
+            // fetch must re-publish .ready even when the value is unchanged,
+            // or the feed would sit in .failed forever while fetches succeed.
+            lastToken = nil
             return
         }
         let token = changeToken(v)
@@ -226,7 +230,15 @@ final class FeedHub {
                      changeToken: @escaping (Value) -> AnyHashable? = { _ in nil },
                      fetch: @escaping @Sendable () async -> Value?) -> Feed<Value> {
         let k = AnyHashable(key)
-        if let existing = feeds[k] as? Feed<Value> { return existing }
+        if let existing = feeds[k] {
+            guard let typed = existing as? Feed<Value> else {
+                // Overwriting would orphan a possibly-live pump (its timer
+                // keeps ticking for existing subscribers while the hub loses
+                // track of it). A key is one query — one value type.
+                preconditionFailure("FeedHub key '\(key)' already registered with \(type(of: existing)), not Feed<\(Value.self)>")
+            }
+            return typed
+        }
         let made = Feed<Value>(cadence: cadence, ticker: clock.makeTicker(),
                                changeToken: changeToken, fetch: fetch)
         feeds[k] = made
