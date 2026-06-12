@@ -26,6 +26,21 @@ struct MoleWhitelist {
     static let sessionBegin = "# BEGIN burrow-session"
     static let sessionEnd   = "# END burrow-session"
 
+    enum WhitelistError: LocalizedError {
+        /// A session path would corrupt the file's line/fence structure
+        /// (it contains a newline, or matches the fence marker text) —
+        /// writing it could leave other paths unprotected or splice the
+        /// user's entries into the swept block. Abort the run instead.
+        case unwritablePath(String)
+
+        var errorDescription: String? {
+            if case .unwritablePath(let p) = self {
+                return String(format: NSLocalizedString("this path can't be protected: %@", comment: ""), p)
+            }
+            return nil
+        }
+    }
+
     let fileURL: URL
 
     /// The real file `mo` reads.
@@ -48,7 +63,7 @@ struct MoleWhitelist {
     func add(_ pattern: String) throws {
         let trimmed = pattern.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !patterns().contains(trimmed) else { return }
-        var raw = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+        var raw = try readForModify()
         if !raw.isEmpty, !raw.hasSuffix("\n") { raw += "\n" }
         raw += trimmed + "\n"
         try write(raw)
@@ -68,12 +83,50 @@ struct MoleWhitelist {
     func beginSession(excluding paths: [String]) throws {
         try endSession()
         guard !paths.isEmpty else { return }
-        var raw = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
+        // mo reads these lines as GLOB PATTERNS: a literal path containing
+        // `*?[]\` would not match itself, silently leaving the un-ticked
+        // item unprotected — the fail-dangerous case the review screen
+        // exists to prevent. Escape every path so it matches exactly
+        // itself; refuse paths that would break the line/fence structure.
+        let escaped = try paths.map { path -> String in
+            let trimmed = path.trimmingCharacters(in: .whitespaces)
+            guard !path.contains("\n"), !path.contains("\r"),
+                  trimmed != Self.sessionBegin, trimmed != Self.sessionEnd else {
+                throw WhitelistError.unwritablePath(path)
+            }
+            return Self.globEscaped(path)
+        }
+        var raw = try readForModify()
         if !raw.isEmpty, !raw.hasSuffix("\n") { raw += "\n" }
         raw += Self.sessionBegin + "\n"
-            + paths.joined(separator: "\n") + "\n"
+            + escaped.joined(separator: "\n") + "\n"
             + Self.sessionEnd + "\n"
         try write(raw)
+    }
+
+    /// Escape glob metacharacters so a literal path matches exactly itself
+    /// (the engine's matcher treats `\` as the escape, per Go's
+    /// `filepath.Match`). User-entered patterns are NOT escaped — globs are
+    /// the whole point there; only session paths are literals.
+    static func globEscaped(_ path: String) -> String {
+        var out = ""
+        out.reserveCapacity(path.count + 4)
+        for ch in path {
+            if ch == "*" || ch == "?" || ch == "[" || ch == "]" || ch == "\\" {
+                out.append("\\")
+            }
+            out.append(ch)
+        }
+        return out
+    }
+
+    /// Read for a read-modify-write. Missing file → "" (we'll create it);
+    /// EXISTS-but-unreadable → throw. Falling back to "" there would make
+    /// the next write WIPE the user's curated patterns — fail safe instead;
+    /// the caller aborts its run.
+    private func readForModify() throws -> String {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return "" }
+        return try String(contentsOf: fileURL, encoding: .utf8)
     }
 
     /// Remove the fenced block, restoring the user's file exactly. Safe to

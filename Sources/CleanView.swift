@@ -259,6 +259,21 @@ struct CleanView: View {
         screen = .hero
         realFlow.start(.moleStream(["clean"], elevated: true,
                                    label: NSLocalizedString("Cleaning caches", comment: "")))
+        // Restore is owned by the RUN, not the view: this watcher ends the
+        // fenced session however the flow finishes, even if the user
+        // navigates away mid-clean (a view-attached onChange would never
+        // fire then, leaving the block to skip those paths until the next
+        // launch sweep). endSession is idempotent; the startup sweep still
+        // covers a crash.
+        let flow = realFlow
+        Task { @MainActor in
+            for await state in flow.$state.values {
+                if case .finished = state {
+                    try? MoleWhitelist.live.endSession()
+                    break
+                }
+            }
+        }
     }
 
     /// The pre-review direct path ("Clean Now" on the hero) — everything
@@ -348,17 +363,10 @@ struct CleanView: View {
             }
             TaskReportView(groups: realFlow.report?.groups ?? [], accent: Tool.clean.accent)
         }
-        .onChange(of: realRunFinished) { _, finished in
-            // Whatever happened, the fenced session block must not outlive
-            // the run (a startup sweep also covers crashes).
-            if finished { try? MoleWhitelist.live.endSession() }
-        }
     }
-
-    private var realRunFinished: Bool {
-        if case .finished = realFlow.state { return true }
-        return false
-    }
+    // (Session restore lives with the run watcher in runRealClean — a
+    // view-attached onChange would miss runs that finish after the user
+    // navigates away.)
 
     private var realStatusText: String {
         switch realFlow.state {

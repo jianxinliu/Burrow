@@ -653,8 +653,15 @@ final class SoftwareModel: ObservableObject {
         let work: [(app: InstalledApp, paths: [String])] = apps.compactMap { app in
             guard let preview = previews[app.id], let ticked = pathSelections[app.id] else { return nil }
             let enumerated = Set(preview.entries.map(\.path))
-            let paths = ticked.filter(enumerated.contains).map { ($0 as NSString).expandingTildeInPath }
-            assert(ticked.isSubset(of: enumerated), "ticked paths must come from the dry-run enumeration")
+            // HARD SAFETY RULE, fail closed (a release-stripped assert is
+            // decoration): every ticked path must come from the engine's
+            // own enumeration. Anything else means corrupted review state —
+            // trash NOTHING for this app rather than trusting a filter.
+            guard ticked.isSubset(of: enumerated) else {
+                assertionFailure("ticked paths must come from the dry-run enumeration")
+                return nil
+            }
+            let paths = ticked.map { ($0 as NSString).expandingTildeInPath }
             return (app, paths)
         }
         let opId = UUID()

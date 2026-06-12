@@ -122,6 +122,76 @@ final class MoleWhitelistTests: XCTestCase {
         XCTAssertTrue(swept.contains("~/.cache/keep-me"))
         XCTAssertFalse(swept.contains("/tmp/orphan"))
     }
+
+    // MARK: - Glob safety: a session path must match exactly ITSELF
+
+    /// mo reads whitelist lines as glob patterns. A literal path with
+    /// metacharacters written verbatim would NOT match itself — the
+    /// un-ticked item would be cleaned anyway, the exact fail-dangerous
+    /// case the review screen exists to prevent.
+    func testBeginSession_globEscapesLiteralPaths() throws {
+        let tricky = "/Users/me/Library/Caches/app [1]/data*"
+        try wl.beginSession(excluding: [tricky])
+        let raw = try String(contentsOf: wl.fileURL, encoding: .utf8)
+        XCTAssertTrue(raw.contains(#"/Users/me/Library/Caches/app \[1\]/data\*"#),
+                      "metachars must be escaped so the pattern matches the literal path")
+        XCTAssertFalse(raw.contains("\n" + tricky + "\n"),
+                       "the unescaped path must not be written")
+        // The sweep still removes the escaped block cleanly.
+        try wl.endSession()
+        XCTAssertEqual(wl.patterns(), [])
+    }
+
+    func testGlobEscaped_escapesEveryMetachar() {
+        XCTAssertEqual(MoleWhitelist.globEscaped(#"a*b?c[d]e\f"#), #"a\*b\?c\[d\]e\\f"#)
+        XCTAssertEqual(MoleWhitelist.globEscaped("/plain/path"), "/plain/path")
+    }
+
+    func testBeginSession_rejectsPathsThatBreakTheFileStructure() throws {
+        try wl.add("~/.npm/_cacache")
+        let before = try String(contentsOf: wl.fileURL, encoding: .utf8)
+
+        // A newline would split into two lines — one garbage pattern, one
+        // unprotected remainder. A path matching the fence text would
+        // corrupt sweep parsing. Both must abort, leaving the file alone.
+        XCTAssertThrowsError(try wl.beginSession(excluding: ["/tmp/a\nb"]))
+        XCTAssertThrowsError(try wl.beginSession(excluding: [MoleWhitelist.sessionBegin]))
+        XCTAssertEqual(try String(contentsOf: wl.fileURL, encoding: .utf8), before,
+                       "an aborted session must not touch the file")
+    }
+
+    // MARK: - Unreadable file: abort, never wipe
+
+    /// `?? ""` on an exists-but-unreadable file would make the next write
+    /// destroy the user's curated patterns. Read failures must abort.
+    func testBeginSession_unreadableFileAborts() throws {
+        try wl.add("~/.npm/_cacache")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000],
+                                              ofItemAtPath: wl.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                       ofItemAtPath: wl.fileURL.path) }
+
+        XCTAssertThrowsError(try wl.beginSession(excluding: ["/tmp/x"]))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                              ofItemAtPath: wl.fileURL.path)
+        XCTAssertEqual(wl.patterns(), ["~/.npm/_cacache"],
+                       "the user's patterns must survive an unreadable-file abort")
+    }
+
+    func testAdd_unreadableFileAborts() throws {
+        try wl.add("~/.npm/_cacache")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000],
+                                              ofItemAtPath: wl.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                       ofItemAtPath: wl.fileURL.path) }
+
+        XCTAssertThrowsError(try wl.add("~/Library/Caches/Homebrew"))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                              ofItemAtPath: wl.fileURL.path)
+        XCTAssertEqual(wl.patterns(), ["~/.npm/_cacache"])
+    }
 }
 
 final class SettingsStoreKeysTests: XCTestCase {
