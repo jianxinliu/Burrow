@@ -172,9 +172,9 @@ struct StatusView: View {
         return ValueTile(
             eyebrow: "Network", glyph: "network", accent: Brand.green,
             value: value, unit: unit, chip: chip,
-            // Tile sparkline = the recent 10 min of the 1 s ring; the full
-            // hour lives in the History tab (it flattened the tile).
-            values: useLive ? io.netHistory(lastSeconds: 600) : model.netHist, chartStyle: .area,
+            // Tile sparkline = the recent 5 min of the 1 s ring; longer
+            // windows live in the History tab (they flattened the tile).
+            values: useLive ? io.netHistory(lastSeconds: 300) : model.netHist, chartStyle: .area,
             footnote: "↓ \(Fmt.rate(rx))  ↑ \(Fmt.rate(tx)) · \(snapNet?.name ?? "—") · \(snapNet?.ip ?? "—")")
     }
 }
