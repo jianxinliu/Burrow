@@ -131,7 +131,8 @@ struct StatusView: View {
         return GlassCard(minHeight: row2H) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Eyebrow(text: "Fan", glyph: "fan", color: Brand.textSecondary)
+                    // Neutral on purpose — see PowerAccent (Format.swift).
+                    Eyebrow(text: "Fan", glyph: "fan", color: PowerAccent.fan)
                     Spacer()
                     if fanCount > 0 {
                         Chip(text: String(format: NSLocalizedString("%d fans", comment: ""), fanCount),
@@ -171,7 +172,9 @@ struct StatusView: View {
         return ValueTile(
             eyebrow: "Network", glyph: "network", accent: Brand.green,
             value: value, unit: unit, chip: chip,
-            values: useLive ? io.netHistory : model.netHist, chartStyle: .area,
+            // Tile sparkline = the recent 10 min of the 1 s ring; the full
+            // hour lives in the History tab (it flattened the tile).
+            values: useLive ? io.netHistory(lastSeconds: 600) : model.netHist, chartStyle: .area,
             footnote: "↓ \(Fmt.rate(rx))  ↑ \(Fmt.rate(tx)) · \(snapNet?.name ?? "—") · \(snapNet?.ip ?? "—")")
     }
 }
@@ -210,7 +213,8 @@ struct HealthCard: View {
 
     private var specLine: String {
         let cpu = s.hardware.cpuModel.replacingOccurrences(of: "Apple ", with: "")
-        let os = s.hardware.osVersion.isEmpty ? "" : " · macOS \(s.hardware.osVersion)"
+        let osText = Fmt.macOSVersion(s.hardware.osVersion)
+        let os = osText.isEmpty ? "" : " · \(osText)"
         return "\(cpu) · \(s.hardware.totalRam)\(os)"
     }
     private var rating: String { HealthRating.label(s.healthScore) }
@@ -290,7 +294,10 @@ struct BatteryCard: View {
             if let b = s.batteries?.first {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Eyebrow(text: "Battery", glyph: "battery.100", color: color(b))
+                        // Accent semantics live in PowerAccent (Format.swift):
+                        // red = low, green = charging/full, amber = discharging.
+                        Eyebrow(text: "Battery", glyph: "battery.100",
+                                color: PowerAccent.battery(percent: b.percent, status: b.status))
                         Spacer()
                         Chip(text: String(format: NSLocalizedString("%d%% Health", comment: ""), b.capacity),
                              color: b.health == "Good" ? Brand.green : Brand.gold)
@@ -309,11 +316,12 @@ struct BatteryCard: View {
                         // Ring gauges: the Mac, then each connected
                         // Bluetooth device that reports a battery.
                         HStack(spacing: 10) {
-                            RingGauge(percent: b.percent, color: color(b),
+                            RingGauge(percent: b.percent,
+                                      color: PowerAccent.battery(percent: b.percent, status: b.status),
                                       glyph: "laptopcomputer", label: NSLocalizedString("Mac", comment: ""))
                             ForEach(Array(bluetoothWithBattery.prefix(4).enumerated()), id: \.offset) { _, device in
                                 RingGauge(percent: Double(device.batteryPercent ?? 0),
-                                          color: ringColor(device.batteryPercent ?? 0),
+                                          color: PowerAccent.level(device.batteryPercent ?? 0),
                                           glyph: BluetoothStrip.glyph(device.name),
                                           label: device.name)
                             }
@@ -330,7 +338,7 @@ struct BatteryCard: View {
                         HStack(spacing: 10) {
                             ForEach(Array(bluetoothWithBattery.prefix(5).enumerated()), id: \.offset) { _, device in
                                 RingGauge(percent: Double(device.batteryPercent ?? 0),
-                                          color: ringColor(device.batteryPercent ?? 0),
+                                          color: PowerAccent.level(device.batteryPercent ?? 0),
                                           glyph: BluetoothStrip.glyph(device.name),
                                           label: device.name)
                             }
@@ -354,16 +362,7 @@ struct BatteryCard: View {
         return parts.joined(separator: " · ")
     }
 
-    private func ringColor(_ percent: Int) -> Color {
-        if percent <= 20 { return Brand.red }
-        if percent <= 40 { return Brand.gold }
-        return Brand.green
-    }
-
-    private func color(_ b: BatteryStatus) -> Color {
-        if b.percent <= 20 { return Brand.red }
-        return b.status == "charging" ? Brand.green : Brand.gold
-    }
+    // (Accent rules live in PowerAccent — Format.swift — shared with the HUD.)
 }
 
 /// Small ring gauge — Mac battery + Bluetooth devices on the battery
@@ -459,7 +458,7 @@ struct BluetoothStrip: View {
             Text(d.name).font(Brand.sans(12)).foregroundStyle(Brand.textPrimary).lineLimit(1)
             if let p = d.batteryPercent {
                 Text("\(p)%").font(Brand.mono(11, .semibold))
-                    .foregroundStyle(p <= 20 ? Brand.red : (p <= 40 ? Brand.gold : Brand.green))
+                    .foregroundStyle(PowerAccent.level(p))
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -482,6 +481,9 @@ struct BluetoothStrip: View {
 
 enum ProcSort { case name, cpu, mem, pid, pwr }
 
+/// The process table: the FULL live process set (ProcessSampler/`ps`,
+/// hundreds of rows — the engine snapshot only carries a top five),
+/// sortable and pinnable, scrolling inside a bounded-height card.
 struct ProcessCard: View {
     @ObservedObject var model: StatusModel
 
@@ -707,13 +709,19 @@ final class StatusModel: ObservableObject {
     @Published var sortKey: ProcSort = .cpu
     @Published var sortAsc = false
     @Published var pinned: Set<Int> = []
-    /// pid → cumulative billed energy (nJ), refreshed with the snapshot.
+    /// pid → cumulative billed energy (nJ), refreshed with the process list.
     @Published var energies: [Int: UInt64] = [:]
+    /// The full live process list (ProcessSampler/`ps`), refreshed on the
+    /// 2 s tick off-main. Empty until the first pass (or on spawn failure)
+    /// — the table then falls back to the snapshot's engine top five.
+    @Published var processes: [ProcessInfo] = []
 
     private let db: DB
     private let live: LiveFeed
     private var liveTimer: Timer?
     private var histTimer: Timer?
+    /// Drop overlapping `ps` passes if one ever outlives the 2 s tick.
+    private var samplingProcesses = false
 
     init(db: DB, live: LiveFeed) {
         self.db = db
@@ -746,7 +754,7 @@ final class StatusModel: ObservableObject {
     }
 
     func sortedProcesses() -> [ProcessInfo] {
-        let procs = snap?.topProcesses ?? []
+        let procs = processes.isEmpty ? (snap?.topProcesses ?? []) : processes
         let sorted = procs.sorted { a, b in
             switch sortKey {
             case .name: return sortAsc ? a.name < b.name : a.name > b.name
@@ -765,13 +773,32 @@ final class StatusModel: ObservableObject {
 
     private func refreshCurrent() {
         snap = live.lastSnapshot
-        // Best-effort PWR per visible pid; "—" where the kernel says
-        // nothing (other users' processes, kernel tasks).
-        var out: [Int: UInt64] = [:]
-        for p in snap?.topProcesses ?? [] {
-            out[p.pid] = ProcessActions.energyNanojoules(pid: p.pid)
+        refreshProcesses()
+    }
+
+    /// One `ps` pass + the PWR lookups, off the main thread (the spawn
+    /// blocks ~10–30 ms), published together so a row and its energy
+    /// always belong to the same pass. Best-effort PWR per pid; "—"
+    /// where the kernel says nothing (other users' processes, kernel
+    /// tasks).
+    private func refreshProcesses() {
+        guard !samplingProcesses else { return }
+        samplingProcesses = true
+        let fallback = snap?.topProcesses ?? []
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sampled = ProcessSampler.sample()
+            let rows = sampled.isEmpty ? fallback : sampled
+            var out: [Int: UInt64] = [:]
+            for p in rows {
+                out[p.pid] = ProcessActions.energyNanojoules(pid: p.pid)
+            }
+            Task { @MainActor in
+                guard let self else { return }
+                self.samplingProcesses = false
+                self.processes = sampled
+                self.energies = out
+            }
         }
-        energies = out
     }
 
     private func refreshHistory() {

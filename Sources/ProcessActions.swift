@@ -72,6 +72,48 @@ enum ProcessActions {
     static func forceKill(pid: Int) -> Bool { kill(Int32(pid), SIGKILL) == 0 }
 }
 
+/// The full live process list for the Status table. `mo status --json`
+/// caps `top_processes` at five, which left the tall process card showing
+/// five rows over dead space — so the table samples the whole set itself
+/// via `ps` (the unprivileged sysctl path; works for every user's
+/// processes, no TTY, no elevation). CPU% is the kernel's decaying
+/// average — the same figure `ps`/`top` print. Parsing is a pure function
+/// of the output text (ProcessSamplerTests).
+enum ProcessSampler {
+    /// `=` headers suppress the title row; `comm` goes LAST because it is
+    /// the executable path and may contain spaces.
+    static let psArgs = ["axo", "pid=,ppid=,pcpu=,pmem=,rss=,comm="]
+
+    /// One `ps` pass → rows sorted by CPU desc. Blocking (≈10–30 ms);
+    /// call off the main thread. Empty on spawn failure — callers fall
+    /// back to the snapshot's engine-provided top five.
+    static func sample() -> [ProcessInfo] {
+        guard let res = try? MoleCLI.run(args: psArgs, executable: "/bin/ps", timeout: 5),
+              res.exitCode == 0 else { return [] }
+        return parse(res.stdout)
+    }
+
+    /// Pure parser: "pid ppid %cpu %mem rss path…" per line. Malformed
+    /// lines are skipped, never invented. rss arrives in KiB → bytes.
+    static func parse(_ output: String) -> [ProcessInfo] {
+        var rows: [ProcessInfo] = []
+        for line in output.split(separator: "\n") {
+            let fields = line.split(separator: " ", maxSplits: 5, omittingEmptySubsequences: true)
+            guard fields.count == 6,
+                  let pid = Int(fields[0]), let ppid = Int(fields[1]),
+                  let cpu = Double(fields[2]), let mem = Double(fields[3]),
+                  let rssKiB = UInt64(fields[4]) else { continue }
+            let command = String(fields[5]).trimmingCharacters(in: .whitespaces)
+            let name = (command as NSString).lastPathComponent
+            guard !name.isEmpty else { continue }
+            rows.append(ProcessInfo(pid: pid, ppid: ppid, name: name, command: command,
+                                    cpu: cpu, memory: mem,
+                                    memoryBytes: rssKiB > 0 ? rssKiB * 1024 : nil))
+        }
+        return rows.sorted { $0.cpu > $1.cpu }
+    }
+}
+
 /// Lifetime cleanup totals for the popover's "Clean Watch" footer.
 enum CleanWatch {
     struct Totals: Equatable {
