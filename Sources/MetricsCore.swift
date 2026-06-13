@@ -60,10 +60,15 @@ enum SnapshotPatcher {
             changed = true
         }
 
-        // GPU usage — only when Mole reports it as unavailable (-1).
+        // GPU usage — fill from the native reading whenever Mole has no
+        // positive value. On Apple Silicon Mole can't read GPU% and reports
+        // 0 (not just -1), so a strict `< 0` test left every stored sample at
+        // 0 while the live tile showed the real figure. `<= 0` covers both;
+        // where Mole reports a real value (Intel) it's kept, and where the
+        // native reading is unavailable (`fill.gpu == nil`) nothing changes.
         if var gpus = root["gpu"] as? [[String: Any]], !gpus.isEmpty {
             let moUsage = (gpus[0]["usage"] as? NSNumber)?.doubleValue ?? -1
-            if moUsage < 0, let util = fill.gpu {
+            if moUsage <= 0, let util = fill.gpu {
                 gpus[0]["usage"] = util
                 root["gpu"] = gpus
                 changed = true

@@ -333,32 +333,39 @@ struct HistoryView: View {
                     // as a clean fraction of that slot. Axis labels map a few
                     // indices back to their real timestamps.
                     let pts = series.first?.points ?? []
-                    Chart {
-                        ForEach(series, id: \.name) { s in
-                            ForEach(Array(s.points.enumerated()), id: \.offset) { idx, p in
-                                BarMark(x: .value("Sample", Double(idx)), y: .value("Value", p.value),
-                                        width: .ratio(0.7))
-                                    .foregroundStyle(s.color.opacity(0.85))
-                            }
-                        }
-                    }
-                    .chartXScale(domain: -0.5 ... (Double(max(pts.count, 1)) - 0.5))
-                    .chartXAxis {
-                        AxisMarks(values: barAxisTicks(pts.count, desired: style.desiredCount)) { v in
-                            AxisGridLine().foregroundStyle(Brand.hairline)
-                            if let d = v.as(Double.self) {
-                                let i = Int(d.rounded())
-                                if i >= 0, i < pts.count {
-                                    AxisValueLabel { Text(pts[i].time, format: style.format) }
-                                        .foregroundStyle(Brand.textTertiary).font(Brand.mono(8))
+                    // Width is a real pixel value from the plot geometry —
+                    // .ratio never establishes a unit on this scale (the bars
+                    // vanished), and a fixed point width renders reliably and
+                    // scales with the sample count so it never overlaps.
+                    GeometryReader { geo in
+                        let barW = max(1.0, geo.size.width / CGFloat(max(pts.count, 1)) * 0.6)
+                        Chart {
+                            ForEach(series, id: \.name) { s in
+                                ForEach(Array(s.points.enumerated()), id: \.offset) { idx, p in
+                                    BarMark(x: .value("Sample", Double(idx)), y: .value("Value", p.value),
+                                            width: .fixed(barW))
+                                        .foregroundStyle(s.color.opacity(0.85))
                                 }
                             }
                         }
-                    }
-                    .chartYAxis {
-                        AxisMarks { _ in
-                            AxisGridLine().foregroundStyle(Brand.hairline)
-                            AxisValueLabel().foregroundStyle(Brand.textTertiary).font(Brand.mono(8))
+                        .chartXScale(domain: -0.5 ... (Double(max(pts.count, 1)) - 0.5))
+                        .chartXAxis {
+                            AxisMarks(values: barAxisTicks(pts.count, desired: style.desiredCount)) { v in
+                                AxisGridLine().foregroundStyle(Brand.hairline)
+                                if let d = v.as(Double.self) {
+                                    let i = Int(d.rounded())
+                                    if i >= 0, i < pts.count {
+                                        AxisValueLabel { Text(pts[i].time, format: style.format) }
+                                            .foregroundStyle(Brand.textTertiary).font(Brand.mono(8))
+                                    }
+                                }
+                            }
+                        }
+                        .chartYAxis {
+                            AxisMarks { _ in
+                                AxisGridLine().foregroundStyle(Brand.hairline)
+                                AxisValueLabel().foregroundStyle(Brand.textTertiary).font(Brand.mono(8))
+                            }
                         }
                     }
                     .frame(height: 170)

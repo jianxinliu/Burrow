@@ -70,6 +70,12 @@ final class SnapshotPatcherTests: XCTestCase {
         let patched = dict(SnapshotPatcher.patch(json: hole, fill: fill))
         XCTAssertEqual(((patched["gpu"] as? [[String: Any]])?.first?["usage"] as? NSNumber)?.doubleValue, 43)
 
+        // Apple Silicon: Mole can't read GPU% and reports 0 (not -1). The
+        // native reading must still fill, or every stored sample sits at 0.
+        let zero = #"{"gpu":[{"name":"G","usage":0}]}"#
+        let filled = dict(SnapshotPatcher.patch(json: zero, fill: fill))
+        XCTAssertEqual(((filled["gpu"] as? [[String: Any]])?.first?["usage"] as? NSNumber)?.doubleValue, 43)
+
         let real = #"{"gpu":[{"name":"G","usage":12}]}"#
         let kept = dict(SnapshotPatcher.patch(json: real, fill: fill))
         XCTAssertEqual(((kept["gpu"] as? [[String: Any]])?.first?["usage"] as? NSNumber)?.doubleValue, 12)
