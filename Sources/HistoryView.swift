@@ -295,6 +295,16 @@ struct HistoryView: View {
     /// discrete usage-style metrics (CPU / GPU / health) read as bars.
     private enum ChartMarks { case line, bars }
 
+    /// Fixed bar width for a bars card, scaled to the point count: fat when
+    /// a short range holds a handful of samples, thin when a long range
+    /// packs hundreds. (Computed against the card's typical plot width;
+    /// the clamp keeps it sane if the real width differs.)
+    private func barWidth(for count: Int) -> CGFloat {
+        let typicalPlotWidth = 360.0
+        let slot = typicalPlotWidth / Double(max(count, 1))
+        return CGFloat(max(2.0, min(14.0, slot * 0.66)))
+    }
+
     private func chartCard(_ title: String, _ subtitle: String,
                            _ series: [(name: String, points: [ChartPoint], color: Color)],
                            marks: ChartMarks = .line) -> some View {
@@ -322,11 +332,15 @@ struct HistoryView: View {
                                 // point, hence no bar — never a fill drawn
                                 // across a hole in the data.
                                 ForEach(s.points) { p in
-                                    // .ratio keeps a clear gap between bars at
-                                    // any range/point-count, so a wide history
-                                    // card reads as bars, not a filled block.
+                                    // BarMark sits on a CONTINUOUS time axis
+                                    // (chartXScale domain) with no implicit
+                                    // category step, so .ratio collapses to
+                                    // nothing and the default fills the gap to
+                                    // the next bar ("too wide"). A fixed width
+                                    // scaled to the point count stays bar-shaped
+                                    // and thin across every range.
                                     BarMark(x: .value("Time", p.time), y: .value("Value", p.value),
-                                            width: .ratio(0.6))
+                                            width: .fixed(barWidth(for: s.points.count)))
                                         .foregroundStyle(s.color.opacity(0.85))
                                 }
                             } else {
