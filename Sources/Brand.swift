@@ -2,10 +2,10 @@
 //  Brand.swift
 //  Burrow
 //
-//  Burrow's own visual language — built to match mole.fit's *experience*
+//  Burrow's own visual language — a polished native experience
 //  (translucent window, glass cards, monospaced numerics, per-tool
-//  colour) while staying our own brand: our palette, our marks, our
-//  copy. This is deliberately separate from the legacy `Theme` enum so
+//  colour) with our own palette, our marks, our copy. This is
+//  deliberately separate from the legacy `Theme` enum so
 //  the redesign can land without disturbing the older views that still
 //  reference `Theme.*`.
 //

@@ -2,12 +2,11 @@
 //  Tool.swift
 //  Burrow
 //
-//  The five tools, each with its own colour identity and a window tint —
-//  the same "each tool re-themes the whole window" idea mole.fit uses,
-//  but with Burrow's own palette and our own taglines (no planets, no
-//  borrowed copy). `navOrder` is the left-to-right order in the top
-//  pill nav; `.status` is where Burrow opens because the live dashboard
-//  is the thing that's actually built.
+//  The five tools, each with its own colour identity and a window tint
+//  that re-themes the whole window as you switch — Burrow's own palette
+//  and taglines. `navOrder` is the left-to-right order in the top pill
+//  nav; `.status` is where Burrow opens because the live dashboard is
+//  the thing that's actually built.
 //
 
 import SwiftUI

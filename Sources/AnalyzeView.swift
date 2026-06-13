@@ -2,11 +2,11 @@
 //  AnalyzeView.swift
 //  Burrow
 //
-//  The Analyze tab — Burrow's take on mole.fit's "Jupiter" disk map.
-//  A squarified treemap of a directory (via `mo analyze --json`, the
-//  existing DiskScanner + Treemap engine), a left rail of the biggest
-//  children, a breadcrumb, and drill-in by click. Reveal / Trash live
-//  in each block's context menu.
+//  The Analyze tab — an interactive disk-usage map. A squarified
+//  treemap of a directory (via `mo analyze --json`, the existing
+//  DiskScanner + Treemap engine), a left rail of the biggest children,
+//  a breadcrumb, and drill-in by click. Reveal / Trash live in each
+//  block's context menu.
 //
 
 import SwiftUI
