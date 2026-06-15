@@ -99,7 +99,7 @@ final class MCPTests: XCTestCase {
         XCTAssertEqual(Set(names),
                        ["burrow_snapshot", "burrow_history", "burrow_top_processes",
                         "burrow_process_usage", "burrow_disk_forecast", "burrow_diff",
-                        "burrow_report", "burrow_info",
+                        "burrow_report", "burrow_doctor", "burrow_info",
                         "burrow_cleanup_history", "burrow_deleted_files",
                         "burrow_analyze", "burrow_list_apps", "burrow_clean",
                         "burrow_optimize", "burrow_uninstall", "burrow_purge",

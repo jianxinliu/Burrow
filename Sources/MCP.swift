@@ -310,6 +310,15 @@ struct ToolCatalog {
                 ] as [String: Any],
             ],
             [
+                "name": "burrow_doctor",
+                "description": "Quick diagnostics: engine (mo) presence, Full Disk Access, memory pressure, disk headroom, and recent decode errors — each an ok/warn/fail check with a short detail. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [String: Any](),
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
                 "name": "burrow_info",
                 "description": "Burrow's own state: list of prefixes with row counts + staleness, current retention setting. Use when diagnosing whether data is flowing.",
                 "inputSchema": [
@@ -437,6 +446,8 @@ struct ToolCatalog {
             return self.callDiff(arguments)
         case "burrow_report":
             return self.callReport(arguments)
+        case "burrow_doctor":
+            return self.callDoctor(arguments)
         case "burrow_info":
             return self.callInfo()
         case "burrow_cleanup_history":
@@ -620,6 +631,42 @@ struct ToolCatalog {
                                        topEnergy: top, newLoginItems: [],
                                        batteryHealthDeltaPct: nil, forecast: forecast)
         return WeeklyReport.markdown(input)
+    }
+
+    /// `burrow_doctor` — diagnostics from signals already on hand: engine
+    /// presence, Full Disk Access, and (from the latest snapshot) memory
+    /// pressure + disk headroom, plus the decode-drift count.
+    private func callDoctor(_ args: [String: Any]) -> String {
+        let moInstalled: Bool
+        if case .installed = MoEngine.shared.availability() { moInstalled = true } else { moInstalled = false }
+        let latest = self.metrics.latest()?.status
+        var free: Int64 = 0, total: Int64 = 0
+        if let d = latest?.disks.max(by: { $0.total < $1.total }) {
+            total = Int64(d.total)
+            free = Int64(d.total > d.used ? d.total - d.used : 0)
+        }
+        let input = Doctor.Input(
+            fullDiskAccess: Privacy.hasFullDiskAccess(),
+            moInstalled: moInstalled,
+            pressure: Self.mapPressure(latest?.memory.pressure),
+            diskFreeBytes: free, diskTotalBytes: total,
+            recentErrorCount: MetricsStore.driftCounters.decodeSkippedTotal)
+        func esc(_ s: String) -> String {
+            "\"\(s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+        }
+        let levels = ["ok", "warn", "fail"]
+        let items = Doctor.report(input).map { c in
+            "{\"name\":\(esc(c.name)),\"level\":\"\(levels[c.level.rawValue])\",\"detail\":\(esc(c.detail))}"
+        }
+        return "{\"checks\":[\(items.joined(separator: ","))]}"
+    }
+
+    /// Map mo's free-text memory-pressure string to the Doctor enum.
+    private static func mapPressure(_ s: String?) -> Doctor.MemoryPressure {
+        guard let s = s?.lowercased() else { return .normal }
+        if s.contains("critical") { return .critical }
+        if s.contains("warn") { return .warning }
+        return .normal
     }
 
     private func callInfo() -> String {
