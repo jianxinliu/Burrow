@@ -621,16 +621,9 @@ struct ToolCatalog {
     /// data sources land (so they're omitted/"unavailable" rather than faked).
     private func callReport(_ args: [String: Any]) -> String {
         let days = max(1, min((args["days"] as? Int) ?? 7, 90))
-        let now = Int(Date().timeIntervalSince1970)
-        let w = MetricsStore.Window(since: now - days * 86_400, until: now)
-        let series = self.metrics.diskFreeSeries(mount: nil, w)
-        let forecast = series.count >= 2 ? DiskForecast.forecast(series, now: now) : nil
-        let top = self.metrics.processWindow(w).ranked(by: .cpuTime, limit: 5)
-            .map { (name: $0.name, cpuSeconds: $0.estCPUSeconds) }
-        let input = WeeklyReport.Input(periodDays: days, spaceReclaimedBytes: nil,
-                                       topEnergy: top, newLoginItems: [],
-                                       batteryHealthDeltaPct: nil, forecast: forecast)
-        return WeeklyReport.markdown(input)
+        return WeeklyReport.markdown(
+            ReportComposer.gather(metrics: self.metrics, days: days,
+                                  now: Int(Date().timeIntervalSince1970)))
     }
 
     /// `burrow_doctor` — diagnostics from signals already on hand: engine
