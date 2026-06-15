@@ -345,6 +345,27 @@ struct MetricsStore {
                              stats: stats)
     }
 
+    // MARK: Disk free history
+
+    /// Free-bytes series for a volume over the window — `total − used` per
+    /// snapshot, the input to `DiskForecast`. `mount == nil` picks the largest
+    /// volume by total size (the main drive); a value matches that mount
+    /// exactly. Snapshots with no matching disk are skipped, not zero-filled.
+    func diskFreeSeries(mount: String?, _ w: Window, maxPoints: Int = 720)
+        -> [(ts: Int, freeBytes: Double)] {
+        snapshots(w, maxPoints: maxPoints).snapshots.compactMap { s in
+            let disk: DiskStatus?
+            if let m = mount {
+                disk = s.status.disks.first { $0.mount == m }
+            } else {
+                disk = s.status.disks.max { $0.total < $1.total }
+            }
+            guard let d = disk else { return nil }
+            let free = d.total > d.used ? d.total - d.used : 0
+            return (s.ts, Double(free))
+        }
+    }
+
     // MARK: Reader staleness
 
     struct ReaderStatus {

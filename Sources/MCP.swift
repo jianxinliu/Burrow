@@ -275,6 +275,18 @@ struct ToolCatalog {
                 ] as [String: Any],
             ],
             [
+                "name": "burrow_disk_forecast",
+                "description": "Forecast when a volume runs out of space, from free-space history. `days` (default 30, 7-365) is the history window to fit; `mount` selects a volume (default: the largest). Returns days_until_full (null when the trend is flat, free space is growing, or there's under a week of history — never a bare date), the bytes/day trend, and the basis it used. Robust to single-sample cliffs. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "days": ["type": "integer", "minimum": 7, "maximum": 365],
+                        "mount": ["type": "string", "description": "Volume mount point, e.g. \"/\". Defaults to the largest volume."],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
                 "name": "burrow_info",
                 "description": "Burrow's own state: list of prefixes with row counts + staleness, current retention setting. Use when diagnosing whether data is flowing.",
                 "inputSchema": [
@@ -396,6 +408,8 @@ struct ToolCatalog {
             return try self.callTopProcesses(arguments)
         case "burrow_process_usage":
             return try self.callProcessUsage(arguments)
+        case "burrow_disk_forecast":
+            return try self.callDiskForecast(arguments)
         case "burrow_info":
             return self.callInfo()
         case "burrow_cleanup_history":
@@ -512,6 +526,23 @@ struct ToolCatalog {
             pieces.append("{\"name\":\"\(escaped)\",\"peak_cpu\":\(p.peakCPU),\"avg_cpu\":\(p.avgCPU),\"est_cpu_time_seconds\":\(p.estCPUSeconds),\"peak_mem\":\(p.peakMem),\"samples\":\(p.samples)}")
         }
         return "{\"metric\":\"\(metric)\",\"window_minutes\":\(minutes),\"start_ts\":\(pw.startTS),\"end_ts\":\(pw.endTS),\"sample_count\":\(pw.sampleCount),\"interval_seconds\":\(Int(pw.intervalSeconds.rounded())),\"processes\":[\(pieces.joined(separator: ","))]}"
+    }
+
+    /// `burrow_disk_forecast` — when does this volume fill? Reads the
+    /// free-space history and runs the (honest, cliff-resistant) forecaster.
+    private func callDiskForecast(_ args: [String: Any]) throws -> String {
+        let days = max(7, min((args["days"] as? Int) ?? 30, 365))
+        let mount = args["mount"] as? String
+        let now = Int(Date().timeIntervalSince1970)
+        let w = MetricsStore.Window(since: now - days * 86_400, until: now)
+        let series = self.metrics.diskFreeSeries(mount: mount, w)
+        let p = DiskForecast.forecast(series, now: now)
+        let mountStr = (mount ?? "primary")
+            .replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let daysStr = p.daysUntilFull.map { String(format: "%.1f", $0) } ?? "null"
+        return "{\"mount\":\"\(mountStr)\",\"basis_days\":\(String(format: "%.1f", p.basisDays)),"
+            + "\"slope_bytes_per_day\":\(Int64(p.slopeBytesPerDay.rounded())),"
+            + "\"days_until_full\":\(daysStr),\"samples\":\(series.count)}"
     }
 
     private func callInfo() -> String {
