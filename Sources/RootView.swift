@@ -37,7 +37,12 @@ struct RootView: View {
     /// gates). Probed at mount and on every app activation, so granting
     /// access in System Settings dismisses the banner by itself.
     @State private var fdaGranted = Privacy.hasFullDiskAccess()
-    @State private var fdaBannerDismissed = Store.fullDiskAccessNoticeDismissed
+    /// Session-only: the FDA banner reappears each launch while access is off,
+    /// and dismissing it only hides it for the current run. (It used to read a
+    /// PERSISTED flag — `fda_notice_dismissed`, shared with the pre-redesign
+    /// notice — so one historical dismiss suppressed it forever even while FDA
+    /// stayed off, which is why upgraders never saw it.)
+    @State private var fdaBannerDismissed = false
     /// Where Esc in the Settings pane returns to.
     @State private var lastNonSettingsPane: Pane = .home
     /// Burrow's own self-update state — drives the top banner.
@@ -103,7 +108,8 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             if !fdaGranted, !fdaBannerDismissed {
                 AccessBanner(onDismiss: {
-                    Store.fullDiskAccessNoticeDismissed = true
+                    // Session-only — don't persist, so a future launch with FDA
+                    // still off shows it again (a gentle once-per-launch nudge).
                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         fdaBannerDismissed = true
                     }
