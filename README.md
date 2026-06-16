@@ -3,7 +3,7 @@
 > but it is **not affiliated with or endorsed by mole.fit** — its own name,
 > mark, palette, and copy are original. 
 >
-> If you want it and to fund `mo`'s development — **buy mole.fit ($9)**.
+> If you want it and to fund `mo`'s development — **buy mole.fit ($19)**.
 
 # Burrow
 
@@ -352,6 +352,7 @@ design system); Settings, History, and Activity are panes in that same window.
 
 **Continuous Updates & Windows Support:** 
 Burrow is in active development! We will continuously roll out new updates, features, and improvements. We are also actively working on bringing Burrow to **Windows** in the near future!
+We want Burrow to be your Mac's memory and an agent's hands.
 
 **Become a Contributor:** 
 Burrow is a community-driven project, and we would absolutely love your help to shape its future. Whether it's fixing bugs, building new features, improving documentation, or helping with the upcoming Windows version, everyone is warmly welcome to join us. Feel free to open issues, submit pull requests, or share your ideas. We look forward to having you as a contributor!
