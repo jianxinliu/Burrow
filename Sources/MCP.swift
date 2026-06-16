@@ -658,10 +658,19 @@ struct ToolCatalog {
             "[" + xs.map { "\"\($0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"" }
                 .joined(separator: ",") + "]"
         }
+        func ids(_ json: String) -> [String] {
+            (try? JSONDecoder().decode([String].self, from: Data(json.utf8))) ?? []
+        }
+        let invRows = self.metrics.rawRows(prefix: Maintenance.startupInvPrefix,
+                                           MetricsStore.Window(since: since, until: now), maxPoints: nil)
+        let login = invRows.count >= 2
+            ? InventoryDiff.diff(old: ids(invRows.first!.json), new: ids(invRows.last!.json))
+            : InventoryDiff.Change(added: [], removed: [])
         return "{\"since_ts\":\(first.ts),\"until_ts\":\(last.ts),"
             + "\"processes_entered\":\(arr(change.added)),\"processes_left\":\(arr(change.removed)),"
+            + "\"login_items_added\":\(arr(login.added)),\"login_items_removed\":\(arr(login.removed)),"
             + "\"disk_free_delta_bytes\":\(freeOf(last.status) - freeOf(first.status)),"
-            + "\"note\":\"app, login-item, and port inventories are not yet tracked across time\"}"
+            + "\"note\":\"app and port inventories are not yet tracked across time\"}"
     }
 
     /// `burrow_report` — the weekly digest as Markdown (the tool's text

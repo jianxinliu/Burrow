@@ -119,8 +119,22 @@ final class Maintenance {
             }
         }
 
+        self.persistStartupInventory()
+
         let finished = Date()
         stats.withLock { $0.lastPruneDeleted = deleted; $0.lastRunAt = finished }
         return MaintenanceReport(deleted: deleted, vacuumed: vacuumed, finishedAt: finished)
+    }
+
+    /// Time-indexed login-item / LaunchAgent inventory (B.8): a JSON list of
+    /// ids per tick, so burrow_diff can answer "what login items changed since
+    /// <time>". Cheap (no `mo`); pruned with everything else.
+    static let startupInvPrefix = "burrow.startup_inv"
+    private func persistStartupInventory() {
+        let ids = StartupInventory.scanLive().map(\.id)
+        guard let data = try? JSONEncoder().encode(ids),
+              let json = String(data: data, encoding: .utf8) else { return }
+        try? self.db.insert(prefix: Self.startupInvPrefix,
+                            ts: Int(Date().timeIntervalSince1970), json: json)
     }
 }

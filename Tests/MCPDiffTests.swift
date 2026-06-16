@@ -66,6 +66,22 @@ final class MCPDiffTests: XCTestCase {
         XCTAssertEqual(delta, -50_000_000_000)
     }
 
+    func testDiff_reportsLoginItemChurn() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let then = now - 3600
+        // Two snapshots (the process/disk diff needs them).
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: then, json: snapshot(freeGB: 100, procs: ["a"]))
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now, json: snapshot(freeGB: 100, procs: ["a"]))
+        // Two login-item inventories — a new persistence item appeared.
+        try db.insert(prefix: Maintenance.startupInvPrefix, ts: then, json: "[\"/A.plist\"]")
+        try db.insert(prefix: Maintenance.startupInvPrefix, ts: now, json: "[\"/A.plist\",\"/evil.plist\"]")
+
+        let json = try catalog.call(name: "burrow_diff", arguments: ["since": then - 10])
+        let o = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], json)
+        XCTAssertEqual(o["login_items_added"] as? [String], ["/evil.plist"], json)
+        XCTAssertEqual(o["login_items_removed"] as? [String], [], json)
+    }
+
     func testDiff_tooFewSnapshots_reportsError() throws {
         let now = Int(Date().timeIntervalSince1970)
         try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now,
