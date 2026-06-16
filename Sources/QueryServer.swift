@@ -100,7 +100,9 @@ final class QueryServer {
         // inside this window; cancelling an already-closed connection is a
         // no-op.
         self.queue.asyncAfter(deadline: .now() + 10) { [weak conn] in
-            conn?.cancel()
+            guard let conn else { return }
+            // SSE /events connections are long-lived; don't idle-cancel them.
+            if !EventHub.shared.isStreaming(conn) { conn.cancel() }
         }
         self.receive(conn, accumulated: Data())
     }
@@ -136,7 +138,9 @@ final class QueryServer {
             if let data { buf.append(data) }
             switch Self.nextAction(buffer: buf, isComplete: isComplete) {
             case .respond(let header):
-                self.send(self.route(header), on: conn)
+                if !self.tryServeEvents(header, on: conn) {
+                    self.send(self.route(header), on: conn)
+                }
             case .drop:
                 conn.cancel()
             case .keepReading:
@@ -169,6 +173,44 @@ final class QueryServer {
         var payload = Data(Self.httpHead(contentLength: body.count, contentType: response.contentType).utf8)
         payload.append(body)
         conn.send(content: payload, completion: .contentProcessed { _ in conn.cancel() })
+    }
+
+    // MARK: - SSE /events (B.6)
+
+    /// Parse the `token` query param from a request target. Static + pure so
+    /// the auth gate is unit-tested without a socket.
+    static func eventsToken(from target: String) -> String {
+        let parts = target.split(separator: "?", maxSplits: 1)
+        guard parts.count > 1 else { return "" }
+        for kv in parts[1].split(separator: "&") {
+            let p = kv.split(separator: "=", maxSplits: 1)
+            if p.count == 2, p[0] == "token" { return String(p[1]) }
+        }
+        return ""
+    }
+
+    /// Handle `GET /events`: a token-gated SSE stream. Returns true if it took
+    /// ownership of the connection (streaming, or 401'd it), false to fall
+    /// through to the normal one-shot router. The server binds loopback only,
+    /// so the token just keeps other local processes/pages from subscribing.
+    private func tryServeEvents(_ header: String, on conn: NWConnection) -> Bool {
+        let line = header.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? ""
+        let parts = line.split(separator: " ")
+        guard parts.count >= 2, parts[0] == "GET" else { return false }
+        let target = String(parts[1])
+        guard target.split(separator: "?", maxSplits: 1).first.map(String.init) == "/events" else { return false }
+
+        guard !Store.queryAuthToken.isEmpty, Self.eventsToken(from: target) == Store.queryAuthToken else {
+            let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            conn.send(content: Data(resp.utf8), completion: .contentProcessed { _ in conn.cancel() })
+            return true
+        }
+        let head = "HTTP/1.1 200 OK\r\n"
+            + "Content-Type: text/event-stream; charset=utf-8\r\n"
+            + "Cache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
+        conn.send(content: Data((head + SSE.comment("connected")).utf8), completion: .contentProcessed { _ in })
+        EventHub.shared.register(conn)
+        return true
     }
 
     // MARK: - Routing

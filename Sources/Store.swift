@@ -394,6 +394,16 @@ enum Store {
         set { write(newValue, "threshold_alerts_enabled") }
     }
 
+    /// Bearer token for the query server's SSE /events stream (B.6). Generated
+    /// once and persisted; agents pass it as `?token=…`. The server is loopback-
+    /// only, so this just stops other local processes/pages from subscribing.
+    static var queryAuthToken: String {
+        if let t = d.string(forKey: "query_auth_token"), !t.isEmpty { return t }
+        let t = UUID().uuidString
+        write(t, "query_auth_token")
+        return t
+    }
+
     // Reminder throttle state (not user-facing): hysteresis flags so a
     // metric hovering at its threshold can't flap, timestamps for the
     // weekly cooldowns. See ReminderRules (Notifications.swift).
