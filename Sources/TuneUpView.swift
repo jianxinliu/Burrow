@@ -34,10 +34,10 @@ struct TuneUpView: View {
     @StateObject private var flow = OperationFlow<TaskRunReport>()
     var isActive: Bool = true
 
-    private enum Phase { case intro, scanning, results, running, done }
+    private enum Phase { case scanning, results, running, done }
     private enum SafeStep { case clean, optimize }
 
-    @State private var phase: Phase = .intro
+    @State private var phase: Phase = .scanning
     @State private var includeClean = true
     @State private var includeOptimize = true
     @State private var runSteps: [SafeStep] = []
@@ -50,7 +50,6 @@ struct TuneUpView: View {
     var body: some View {
         Group {
             switch phase {
-            case .intro:             introHero
             case .scanning:          scanningHero
             case .results:           resultsView
             case .running, .done:    runView
@@ -66,39 +65,16 @@ struct TuneUpView: View {
         .sheet(isPresented: $showPlan) { planSheet }
     }
 
-    /// On entry, jump straight to the last results if we have a cached scan;
-    /// otherwise show the Scan hero. Never disturbs an in-flight run.
+    /// On entry, auto-run the read-only scans (issue #77). The scan is cached
+    /// across pane switches + relaunch (TuneUpModel), so this only actually
+    /// scans when there's no snapshot yet — landing on results, or the scanning
+    /// animation while it runs. Never disturbs an in-flight tune-up run.
     private func routeOnAppear() {
         guard isActive else { return }
-        if phase == .intro, model.snapshot != nil { phase = .results }
-    }
-
-    // MARK: - Intro (Smart-Care hero)
-
-    private var introHero: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            HeroOrb(accent: accent)
-            VStack(spacing: 8) {
-                Text(NSLocalizedString("Tune-Up", comment: ""))
-                    .font(Brand.serif(28, .medium)).foregroundStyle(Brand.textPrimary)
-                Text(NSLocalizedString("One scan finds what's reclaimable and what's worth a look — then act in a single pass.", comment: ""))
-                    .font(Brand.serif(15)).italic().foregroundStyle(Brand.textSecondary)
-                    .multilineTextAlignment(.center).frame(maxWidth: 420)
-            }
-            HStack(spacing: 12) {
-                PillButton(title: "Scan") { startScan() }
-                if model.snapshot != nil {
-                    PillButton(title: "View last results", filled: false) { phase = .results }
-                }
-            }
-            .padding(.top, 4)
-            if model.snapshot != nil {
-                Text(scannedAgoText).font(Brand.mono(11)).foregroundStyle(Brand.textTertiary)
-            }
-            Spacer(); Spacer()
+        model.scanIfNeeded()
+        if phase == .scanning || phase == .results {
+            phase = model.snapshot != nil ? .results : .scanning
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Scanning

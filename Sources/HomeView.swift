@@ -23,6 +23,7 @@ struct HomeView: View {
 
     enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview"
+        case tuneup = "Tune-Up"
         case history = "History"
         case activity = "Activity"
         case doctor = "Doctor"
@@ -90,6 +91,7 @@ struct HomeView: View {
     private var content: some View {
         switch section {
         case .overview: StatusView(db: db, live: live, feeds: feeds)
+        case .tuneup:   TuneUpView()
         case .history:  HistoryView(db: db, live: live, feeds: feeds)
         case .activity: ActivityView(feeds: feeds)
         case .doctor:   DoctorView(db: db)

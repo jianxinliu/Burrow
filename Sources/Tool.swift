@@ -21,7 +21,7 @@ enum Tool: String, CaseIterable, Identifiable {
     /// optimize, then apps / analyze. The .purge/.installer cases live on for
     /// the hub cards, MCP actions, and Explain deep-links. The live dashboard
     /// isn't a tool anymore — it's Home, reached by the Burrow mark.
-    static let navOrder: [Tool] = [.clean, .optimize, .apps, .analyze, .ports, .connectivity, .tuneup]
+    static let navOrder: [Tool] = [.clean, .optimize, .apps, .analyze, .ports, .connectivity]
 
     /// Lowercase tab label (matches the instrument-panel voice).
     var label: String { NSLocalizedString(rawValue, comment: "") }
