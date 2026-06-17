@@ -88,6 +88,30 @@ final class NotificationsTests: XCTestCase {
                                                    lastNotice: nil, now: now))
     }
 
+    // MARK: - Backup overdue
+
+    func testBackupOverdue_firesPastThreshold_silentWhenRecentOrUnknown() {
+        let now = Date()
+        XCTAssertEqual(ReminderRules.backupOverdue(daysAgo: 9, lastNotice: nil, now: now), 9)
+        XCTAssertNil(ReminderRules.backupOverdue(daysAgo: 3, lastNotice: nil, now: now), "under threshold")
+        XCTAssertNil(ReminderRules.backupOverdue(daysAgo: nil, lastNotice: nil, now: now), "no backup history → silent")
+        // Weekly cooldown blocks a refire.
+        XCTAssertNil(ReminderRules.backupOverdue(daysAgo: 30, lastNotice: now.addingTimeInterval(-2 * day), now: now))
+        XCTAssertEqual(ReminderRules.backupOverdue(daysAgo: 30, lastNotice: now.addingTimeInterval(-8 * day), now: now), 30)
+    }
+
+    // MARK: - SMART failing
+
+    func testSmartFailing_onlyOnFalseVerdict_throttledWeekly() {
+        let now = Date()
+        XCTAssertTrue(ReminderRules.smartFailing(verified: false, lastNotice: nil, now: now))
+        XCTAssertFalse(ReminderRules.smartFailing(verified: true, lastNotice: nil, now: now), "verified → silent")
+        XCTAssertFalse(ReminderRules.smartFailing(verified: nil, lastNotice: nil, now: now), "unknown → never cry wolf")
+        XCTAssertFalse(ReminderRules.smartFailing(verified: false, lastNotice: now.addingTimeInterval(-day), now: now),
+                       "weekly cooldown")
+        XCTAssertTrue(ReminderRules.smartFailing(verified: false, lastNotice: now.addingTimeInterval(-8 * day), now: now))
+    }
+
     // MARK: - mo history parsing
 
     private func session(_ command: String, startedAt: String, endedAt: String) -> HistorySession {

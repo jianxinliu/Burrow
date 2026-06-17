@@ -451,6 +451,16 @@ enum Store {
         set { write(newValue, "last_trash_reminder_at") }
     }
 
+    static var lastBackupReminderAt: Date? {
+        get { d.object(forKey: "last_backup_reminder_at") as? Date }
+        set { write(newValue, "last_backup_reminder_at") }
+    }
+
+    static var lastSmartReminderAt: Date? {
+        get { d.object(forKey: "last_smart_reminder_at") as? Date }
+        set { write(newValue, "last_smart_reminder_at") }
+    }
+
     // MARK: - Onboarding
 
     /// Whether the user has finished (or skipped past) the first-run

@@ -88,6 +88,24 @@ enum ReminderRules {
         return days
     }
 
+    /// Days without a Time Machine backup before the nudge speaks, weekly
+    /// throttled. A nil `daysAgo` (no backups configured / unknown) stays
+    /// silent — we never invent a backup history.
+    static let backupOverdueDays = 7
+    static func backupOverdue(daysAgo: Int?, lastNotice: Date?, now: Date = Date()) -> Int? {
+        guard let daysAgo, daysAgo >= backupOverdueDays else { return nil }
+        if let lastNotice, now.timeIntervalSince(lastNotice) < Double(repeatCooldownDays) * 86_400 { return nil }
+        return daysAgo
+    }
+
+    /// SMART self-test failing → one alert, weekly throttled. A verified or
+    /// unreadable (nil) verdict stays silent: we never cry wolf on unknown.
+    static func smartFailing(verified: Bool?, lastNotice: Date?, now: Date = Date()) -> Bool {
+        guard verified == false else { return false }
+        if let lastNotice, now.timeIntervalSince(lastNotice) < Double(repeatCooldownDays) * 86_400 { return false }
+        return true
+    }
+
     /// Most recent completed `clean` session from `mo history`.
     /// `started_at` is "yyyy-MM-dd HH:mm:ss" in local time; rows that
     /// don't parse contribute nothing (we never guess).
@@ -219,14 +237,19 @@ final class BurrowNotifier: NSObject {
             let free = Self.freeDiskSpace()
             let trashBytes = Self.trashSizeBytes()
             let lastClean = probeHistory ? ReminderRules.lastCompletedClean(MoleHistory.load()) : nil
+            // Backup + SMART change slowly — probe on the daily cadence only.
+            let backupDays = probeHistory ? BackupStatus.lastBackupDaysAgo() : nil
+            let smart = probeHistory ? DiskHealth.smartVerified() : nil
             Task { @MainActor in
-                self?.evaluateReminders(free: free, trashBytes: trashBytes, lastClean: lastClean)
+                self?.evaluateReminders(free: free, trashBytes: trashBytes, lastClean: lastClean,
+                                        backupDaysAgo: backupDays, smartVerified: smart)
             }
         }
     }
 
     private func evaluateReminders(free: (fraction: Double, freeBytes: Int64)?,
-                                   trashBytes: Int64, lastClean: Date?) {
+                                   trashBytes: Int64, lastClean: Date?,
+                                   backupDaysAgo: Int? = nil, smartVerified: Bool? = nil) {
         guard Store.smartRemindersEnabled else { return }
 
         if let free {
@@ -259,6 +282,22 @@ final class BurrowNotifier: NSObject {
                 title: String(format: NSLocalizedString("It's been %d days since your last clean", comment: ""), days),
                 body: NSLocalizedString("Caches grow back on their own — a quick scan shows what's reclaimable.", comment: ""),
                 pane: "clean", id: "burrow-reminder-clean")
+        }
+
+        if let days = ReminderRules.backupOverdue(daysAgo: backupDaysAgo, lastNotice: Store.lastBackupReminderAt) {
+            Store.lastBackupReminderAt = Date()
+            postReminder(
+                title: NSLocalizedString("Time Machine backup is overdue", comment: ""),
+                body: String(format: NSLocalizedString("Your last backup was %d days ago. Connect your backup drive to catch up.", comment: ""), days),
+                pane: nil, id: "burrow-reminder-backup")
+        }
+
+        if ReminderRules.smartFailing(verified: smartVerified, lastNotice: Store.lastSmartReminderAt) {
+            Store.lastSmartReminderAt = Date()
+            postReminder(
+                title: NSLocalizedString("Your disk reports a SMART failure", comment: ""),
+                body: NSLocalizedString("The drive's self-test is failing. Back up your data now — this can precede drive failure.", comment: ""),
+                pane: nil, id: "burrow-reminder-smart")
         }
     }
 
