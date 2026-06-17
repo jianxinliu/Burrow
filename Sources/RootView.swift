@@ -72,6 +72,8 @@ struct RootView: View {
             // A single soft warm glow in the corner — the house "gradient",
             // kept ambient rather than a per-tool window wash.
             Brand.ambientGlow.ignoresSafeArea()
+            // A faint film grain over the ground — tactile, not flat.
+            GrainOverlay()
 
             ZStack(alignment: .topLeading) {
                 // Content sits under the floating rail, inset on the left to
@@ -89,14 +91,14 @@ struct RootView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .padding(.leading, 88)
-                .padding(.top, 22)
+                .padding(.top, 12)
 
                 // Floating left rail — a detached, rounded rail of icon buttons
                 // in place of a top tab bar. Padded clear of the traffic lights
                 // and drawn over the content.
                 FloatingRail(selected: $pane)
                     .padding(.leading, 14)
-                    .padding(.top, 26)
+                    .padding(.top, 10)
                     .padding(.bottom, 14)
             }
         }

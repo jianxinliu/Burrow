@@ -250,6 +250,7 @@ struct HistoryView: View {
                     .padding(20)
                 }
                 .scrollIndicators(.hidden)
+                .fadeEdges()
             }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The whole load/refresh lifecycle is one task-scoped feed

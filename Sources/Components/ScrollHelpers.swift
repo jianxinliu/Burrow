@@ -31,3 +31,29 @@ extension View {
     /// scrollers. Attach to content *inside* a ScrollView.
     func overlayScrollers() -> some View { background(OverlayScrollers()) }
 }
+
+/// Fades content to transparent at the top & bottom edges — the soft
+/// "gradient" feel on scroll areas, so rows melt away instead of hard-cutting
+/// at the viewport edge. Height-aware, so the fade band stays a roughly
+/// constant pixel height at any size.
+private struct EdgeFade: ViewModifier {
+    var length: CGFloat
+    func body(content: Content) -> some View {
+        content.mask(
+            GeometryReader { geo in
+                let f = min(0.5, length / max(geo.size.height, 1))
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: f),
+                    .init(color: .black, location: 1 - f),
+                    .init(color: .clear, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+            }
+        )
+    }
+}
+
+extension View {
+    /// Soft-fade the top & bottom edges of a scroll area.
+    func fadeEdges(_ length: CGFloat = 24) -> some View { modifier(EdgeFade(length: length)) }
+}

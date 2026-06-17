@@ -47,9 +47,11 @@ struct FloatingRail: View {
                     .foregroundStyle(selected == .settings ? Brand.onAccent : Brand.textSecondary)
             }
         }
-        // The rail floats just below the traffic-light strip, so its first
-        // icon sits at the panel's top — no dead band inside the rail.
-        .padding(8)
+        // Panel runs near the window top; the top inset is just enough to
+        // clear the traffic lights that the OS pins over this corner.
+        .padding(.horizontal, 8)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
         .frame(width: 60)
         .frame(maxHeight: .infinity)
         .background(
