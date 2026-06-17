@@ -4,13 +4,13 @@
 //
 //  Dev hygiene Home section (roadmap C.9). Each developer ecosystem's
 //  cache/artifact roots that exist on disk, grouped under one Brand card per
-//  ecosystem (icon + name + total), biggest ecosystem first, with per-path
-//  size, reveal-in-Finder, and a move-to-Trash. Read-only scan off the main
-//  thread; clearing trashes a single root (reversible).
+//  ecosystem (icon + name + total), biggest first. Rows are multi-selectable:
+//  tick the ones you want gone and reclaim them in one pass (everything goes to
+//  the Trash — reversible). Read-only scan off the main thread.
 //
 //  NOTE (hand-test): compile-verified only. Verify sizes look right, the scan
-//  stays off the main thread on a machine with large caches, and Clear trashes
-//  exactly the named root.
+//  stays off the main thread on a machine with large caches, and "Move to
+//  Trash" trashes exactly the ticked roots.
 //
 
 import SwiftUI
@@ -32,40 +32,50 @@ struct DevHygieneView: View {
 
     @State private var groups: [Group] = []
     @State private var scanning = true
-    @State private var clearTarget: PathRow?
-    @State private var clearEcosystem: String = ""
+    @State private var selected: Set<UUID> = []
+    @State private var confirmBulk = false
 
     private var grandTotal: Int64 { groups.reduce(0) { $0 + $1.total } }
+    private var allRows: [PathRow] { groups.flatMap(\.paths) }
+    private var selectedRows: [PathRow] { allRows.filter { selected.contains($0.id) } }
+    private var selectedBytes: Int64 { selectedRows.reduce(0) { $0 + $1.bytes } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                header
-                if !scanning, groups.isEmpty {
-                    emptyNote
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
+                    if !scanning, groups.isEmpty { emptyNote }
+                    ForEach(groups) { ecosystemCard($0) }
                 }
-                ForEach(groups) { group in
-                    ecosystemCard(group)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            .scrollIndicators(.hidden)
+            if !groups.isEmpty { bottomBar }
         }
-        .scrollIndicators(.hidden)
         .task { await scan() }
         .confirmationDialog(
-            NSLocalizedString("Move this cache to the Trash?", comment: ""),
-            isPresented: Binding(get: { clearTarget != nil },
-                                 set: { if !$0 { clearTarget = nil } }),
-            presenting: clearTarget
-        ) { r in
-            Button(NSLocalizedString("Move to Trash", comment: ""), role: .destructive) {
-                try? FileManager.default.trashItem(at: URL(fileURLWithPath: r.path), resultingItemURL: nil)
-                Task { await scan() }
+            String(format: NSLocalizedString("Move %d cache%@ to the Trash?", comment: ""),
+                   selectedRows.count, selectedRows.count == 1 ? "" : "s"),
+            isPresented: $confirmBulk
+        ) {
+            Button(String(format: NSLocalizedString("Move %@ to Trash", comment: ""), Fmt.bytes(selectedBytes)),
+                   role: .destructive) {
+                let paths = selectedRows.map(\.path)
+                Task {
+                    await Task.detached(priority: .utility) {
+                        for p in paths {
+                            try? FileManager.default.trashItem(at: URL(fileURLWithPath: p), resultingItemURL: nil)
+                        }
+                    }.value
+                    selected.removeAll()
+                    await scan()
+                }
             }
             Button(NSLocalizedString("Cancel", comment: ""), role: .cancel) {}
-        } message: { r in
-            Text("\(clearEcosystem) — \(Fmt.bytes(r.bytes))\n\(r.path)")
+        } message: {
+            Text(NSLocalizedString("These move to the Trash, so you can put them back. Caches regenerate as you work.", comment: ""))
         }
     }
 
@@ -87,6 +97,14 @@ struct DevHygieneView: View {
                 }
             }
             Spacer()
+            if !groups.isEmpty {
+                Button { toggleSelectAll() } label: {
+                    Text(selected.count == allRows.count
+                         ? NSLocalizedString("Deselect all", comment: "")
+                         : NSLocalizedString("Select all", comment: ""))
+                        .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
+                }.buttonStyle(.plain)
+            }
         }
     }
 
@@ -112,35 +130,54 @@ struct DevHygieneView: View {
                     Spacer()
                     Text(Fmt.bytes(group.total)).font(Brand.mono(13, .medium)).foregroundStyle(Brand.textPrimary)
                 }
-                if group.paths.count > 1 || group.paths.first?.path != group.ecosystem {
-                    Rectangle().fill(Brand.hairline).frame(height: 1)
-                }
-                ForEach(group.paths) { r in
-                    HStack(spacing: 10) {
-                        Text(displayPath(r.path)).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
-                            .lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Text(Fmt.bytes(r.bytes)).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: r.path)])
-                        } label: {
-                            Image(systemName: "magnifyingglass").font(.system(size: 11))
-                                .foregroundStyle(Brand.textSecondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(NSLocalizedString("Reveal in Finder", comment: ""))
-                        Button {
-                            clearEcosystem = group.ecosystem
-                            clearTarget = r
-                        } label: {
-                            Text(NSLocalizedString("Clear", comment: ""))
-                                .font(Brand.sans(11, .semibold)).foregroundStyle(Tool.tuneup.accent)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                Rectangle().fill(Brand.hairline).frame(height: 1)
+                ForEach(group.paths) { r in pathRow(r) }
             }
         }
+    }
+
+    private func pathRow(_ r: PathRow) -> some View {
+        let on = selected.contains(r.id)
+        return HStack(spacing: 10) {
+            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 15)).foregroundStyle(on ? Tool.tuneup.accent : Brand.textTertiary)
+            Text(displayPath(r.path)).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Text(Fmt.bytes(r.bytes)).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: r.path)])
+            } label: {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Brand.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help(NSLocalizedString("Reveal in Finder", comment: ""))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if on { selected.remove(r.id) } else { selected.insert(r.id) } }
+    }
+
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Brand.hairline).frame(height: 1)
+            HStack(spacing: 12) {
+                Text(selected.isEmpty
+                     ? NSLocalizedString("Tick caches to reclaim", comment: "")
+                     : String(format: NSLocalizedString("%d selected · %@", comment: ""),
+                              selected.count, Fmt.bytes(selectedBytes)))
+                    .font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
+                Spacer()
+                PillButton(title: "Move to Trash") { confirmBulk = true }
+                    .disabled(selected.isEmpty)
+                    .opacity(selected.isEmpty ? 0.4 : 1)
+            }
+            .padding(.horizontal, 18).padding(.vertical, 10)
+        }
+    }
+
+    private func toggleSelectAll() {
+        if selected.count == allRows.count { selected.removeAll() }
+        else { selected = Set(allRows.map(\.id)) }
     }
 
     /// Abbreviate the home prefix so the row reads as "~/Library/…".
