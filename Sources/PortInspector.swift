@@ -38,6 +38,11 @@ struct ListeningPort: Equatable, Identifiable {
         guard let a = remoteAddress, let p = remotePort else { return nil }
         return a.contains(":") ? "[\(a)]:\(p)" : "\(a):\(p)"   // bracket IPv6
     }
+
+    /// Local bind, e.g. "*:3000" or "127.0.0.1:5432".
+    var localDisplay: String {
+        address == "*" ? "*:\(port)" : (address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)")
+    }
 }
 
 enum PortInspector {
@@ -87,5 +92,35 @@ enum PortInspector {
             if let r = p.remoteAddress?.lowercased(), r.contains(q) { return true }
             return false
         }
+    }
+
+    /// Drop exact-duplicate rows — e.g. a process listening on the same port
+    /// over IPv4 *and* IPv6 yields two identical entries (same pid/proto/port/
+    /// state/peer). They collapse to one; leaving them in gave SwiftUI's ForEach
+    /// duplicate ids → phantom gaps + scroll glitches.
+    static func deduped(_ ports: [ListeningPort]) -> [ListeningPort] {
+        var seen = Set<String>()
+        return ports.filter { seen.insert($0.id).inserted }
+    }
+
+    enum SortKey: String, CaseIterable { case port, process, peer, down, up }
+
+    /// Sort for the table when the user picks a column. Listening/established
+    /// are NOT forced apart here (that's the filter's job) so a bandwidth sort
+    /// shows the busiest connections regardless of state.
+    static func sorted(_ ports: [ListeningPort], by key: SortKey, ascending: Bool,
+                       rates: [Int: NetUsage.Rates]) -> [ListeningPort] {
+        let s = ports.sorted { a, b in
+            switch key {
+            case .port:    return a.port != b.port ? a.port < b.port : a.process < b.process
+            case .process:
+                let (pa, pb) = (a.process.lowercased(), b.process.lowercased())
+                return pa != pb ? pa < pb : a.port < b.port
+            case .peer:    return (a.remoteAddress ?? "") < (b.remoteAddress ?? "")
+            case .down:    return (rates[a.pid]?.down ?? 0) < (rates[b.pid]?.down ?? 0)
+            case .up:      return (rates[a.pid]?.up ?? 0) < (rates[b.pid]?.up ?? 0)
+            }
+        }
+        return ascending ? s : s.reversed()
     }
 }

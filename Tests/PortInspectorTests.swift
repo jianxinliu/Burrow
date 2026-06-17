@@ -74,4 +74,29 @@ final class PortInspectorTests: XCTestCase {
         XCTAssertEqual(PortInspector.filter(ports, .all, query: "postgre").map(\.port), [5432]) // service label
         XCTAssertEqual(PortInspector.filter(ports, .all, query: "93.184").map(\.port), [443])   // remote host
     }
+
+    func testDeduped_collapsesIdenticalRows() {
+        // IPv4 + IPv6 listening on the same port = two identical entries.
+        let dupes = [mk(3000, pid: 10), mk(3000, pid: 10), mk(8080, pid: 11)]
+        let out = PortInspector.deduped(dupes)
+        XCTAssertEqual(out.count, 2)
+        XCTAssertEqual(Set(out.map(\.port)), [3000, 8080])
+    }
+
+    func testSorted_byBandwidth_usesRates() {
+        let ports = [mk(3000, pid: 1), mk(8080, pid: 2), mk(443, pid: 3)]
+        let rates: [Int: NetUsage.Rates] = [
+            1: .init(down: 100, up: 0),
+            2: .init(down: 5000, up: 0),
+            3: .init(down: 50, up: 0),
+        ]
+        let desc = PortInspector.sorted(ports, by: .down, ascending: false, rates: rates)
+        XCTAssertEqual(desc.map(\.pid), [2, 1, 3], "busiest download first")
+    }
+
+    func testSorted_byPort_ascending() {
+        let ports = [mk(8080, pid: 1), mk(443, pid: 2), mk(3000, pid: 3)]
+        XCTAssertEqual(PortInspector.sorted(ports, by: .port, ascending: true, rates: [:]).map(\.port),
+                       [443, 3000, 8080])
+    }
 }

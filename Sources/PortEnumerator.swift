@@ -90,7 +90,7 @@ enum PortEnumerator {
                                          remotePort: e.remotePort))
             }
         }
-        return PortInspector.sorted(out)
+        return PortInspector.sorted(PortInspector.deduped(out))
     }
 
     /// insi_lport / insi_fport hold the port in network byte order in their low
