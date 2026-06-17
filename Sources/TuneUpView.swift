@@ -2,14 +2,14 @@
 //  TuneUpView.swift
 //  Burrow
 //
-//  The Tune-Up pane (#77): a persistent "review everything, then act in one
-//  pass" surface. On entry it reads the cached scan (instant) or runs the
-//  read-only scans once, then shows six review sections:
+//  The Tune-Up pane (#77): a guided "scan everything, then act in one pass"
+//  surface in the Smart-Care shape — a big Scan hero on entry, an animated
+//  scanning pass, then unified results across six modules:
 //
-//    Safe set (reversible, one-tap runnable here):
+//    Runnable here (reversible, one tap):
 //      • Cleanable junk   — the clean dry-run total
 //      • Maintenance      — the optimize task list
-//    Review-only (flagged here, acted on in their own panes):
+//    Worth your review (acted on in their own panes):
 //      • Apps to uninstall — your largest installed apps
 //      • App & Homebrew updates — deep-link (kept click-gated for privacy)
 //      • Startup items     — new since the baseline + what's controllable
@@ -18,11 +18,12 @@
 //  "Run the safe set" shows a visible plan, then runs Clean → Optimize through
 //  the same OperationFlow the dedicated tabs use (each elevated step prompts
 //  separately — honest auth, no pooled helper yet). The scan snapshot and the
-//  last-run summary persist across pane switches AND relaunch via TuneUpModel.
+//  last-run summary persist across pane switches AND relaunch via TuneUpModel,
+//  so re-entry lands straight on the last results.
 //
-//  NOTE (hand-test): compile-verified only. Verify: first open scans and
-//  persists; re-open is instant; "Run the safe set" runs clean then optimize
-//  with two auth prompts and lands on a done summary; deep-links jump panes.
+//  NOTE (hand-test): compile-verified only. Verify: Scan runs the pass and
+//  lands on results; re-entry shows last results; "Run the safe set" runs clean
+//  then optimize with two auth prompts and a done summary; deep-links jump panes.
 //
 
 import SwiftUI
@@ -33,10 +34,10 @@ struct TuneUpView: View {
     @StateObject private var flow = OperationFlow<TaskRunReport>()
     var isActive: Bool = true
 
-    private enum Phase { case review, running, done }
+    private enum Phase { case intro, scanning, results, running, done }
     private enum SafeStep { case clean, optimize }
 
-    @State private var phase: Phase = .review
+    @State private var phase: Phase = .intro
     @State private var includeClean = true
     @State private var includeOptimize = true
     @State private var runSteps: [SafeStep] = []
@@ -49,22 +50,103 @@ struct TuneUpView: View {
     var body: some View {
         Group {
             switch phase {
-            case .review:            dashboard
+            case .intro:             introHero
+            case .scanning:          scanningHero
+            case .results:           resultsView
             case .running, .done:    runView
             }
         }
-        .onAppear { if isActive { model.scanIfNeeded() } }
-        .onChange(of: isActive) { _, now in if now { model.scanIfNeeded() } }
+        .onAppear { routeOnAppear() }
+        .onChange(of: isActive) { _, now in if now { routeOnAppear() } }
+        // Scan finished → reveal results.
+        .onChange(of: model.scanning) { _, scanning in
+            if !scanning, phase == .scanning { phase = .results }
+        }
         .onChange(of: flowToken) { _, _ in handleFlowChange() }
         .sheet(isPresented: $showPlan) { planSheet }
     }
 
-    // MARK: - Dashboard (review)
+    /// On entry, jump straight to the last results if we have a cached scan;
+    /// otherwise show the Scan hero. Never disturbs an in-flight run.
+    private func routeOnAppear() {
+        guard isActive else { return }
+        if phase == .intro, model.snapshot != nil { phase = .results }
+    }
 
-    private var dashboard: some View {
+    // MARK: - Intro (Smart-Care hero)
+
+    private var introHero: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            HeroOrb(accent: accent)
+            VStack(spacing: 8) {
+                Text(NSLocalizedString("Tune-Up", comment: ""))
+                    .font(Brand.serif(28, .medium)).foregroundStyle(Brand.textPrimary)
+                Text(NSLocalizedString("One scan finds what's reclaimable and what's worth a look — then act in a single pass.", comment: ""))
+                    .font(Brand.serif(15)).italic().foregroundStyle(Brand.textSecondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 420)
+            }
+            HStack(spacing: 12) {
+                PillButton(title: "Scan") { startScan() }
+                if model.snapshot != nil {
+                    PillButton(title: "View last results", filled: false) { phase = .results }
+                }
+            }
+            .padding(.top, 4)
+            if model.snapshot != nil {
+                Text(scannedAgoText).font(Brand.mono(11)).foregroundStyle(Brand.textTertiary)
+            }
+            Spacer(); Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Scanning
+
+    private var scanningHero: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            ZStack {
+                HeroOrb(accent: accent, size: 120)
+                ProgressView().controlSize(.large).tint(.white)
+            }
+            VStack(spacing: 6) {
+                Text(NSLocalizedString("Scanning your Mac…", comment: ""))
+                    .font(Brand.serif(20, .medium)).foregroundStyle(Brand.textPrimary)
+                Text(model.progress.isEmpty ? NSLocalizedString("Taking stock of the den…", comment: "") : model.progress)
+                    .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Self.scanModules, id: \.0) { (label, glyph) in
+                    HStack(spacing: 9) {
+                        Image(systemName: glyph).font(.system(size: 11)).foregroundStyle(accent).frame(width: 16)
+                        Text(NSLocalizedString(label, comment: "")).font(Brand.sans(12)).foregroundStyle(Brand.textSecondary)
+                        Spacer()
+                    }
+                }
+            }
+            .frame(width: 260)
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Brand.cardFill))
+            Spacer(); Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private static let scanModules: [(String, String)] = [
+        ("Cleanable junk", "sparkles"),
+        ("Maintenance", "wand.and.stars"),
+        ("Large apps", "shippingbox"),
+        ("Startup items", "power"),
+        ("Big disk users", "internaldrive"),
+    ]
+
+    // MARK: - Results
+
+    private var resultsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                header
+                resultsHeader
                 if let snap = model.snapshot {
                     safeSetCard(snap)
                     if !snap.bigApps.isEmpty { uninstallCard(snap.bigApps) }
@@ -72,11 +154,7 @@ struct TuneUpView: View {
                     startupCard(snap)
                     if !snap.bigDisk.isEmpty { diskCard(snap.bigDisk) }
                     if let at = snap.lastRunAt { lastRunCard(at, snap.lastRunSummary) }
-                    if !snap.hasFindings, !model.scanning { tidyNote }
-                } else if model.scanning {
-                    scanningPlaceholder
-                } else {
-                    scanningPlaceholder
+                    if !snap.hasFindings { tidyNote }
                 }
             }
             .padding(20)
@@ -85,29 +163,19 @@ struct TuneUpView: View {
         .scrollIndicators(.hidden)
     }
 
-    private var header: some View {
+    private var resultsHeader: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(NSLocalizedString("Tune-Up", comment: ""))
+                Text(NSLocalizedString("Scan results", comment: ""))
                     .font(Brand.serif(26, .medium)).foregroundStyle(Brand.textPrimary)
-                HStack(spacing: 7) {
-                    if model.scanning {
-                        ProgressView().controlSize(.small).tint(accent)
-                        Text(model.progress.isEmpty ? NSLocalizedString("Scanning…", comment: "") : model.progress)
-                            .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
-                    } else {
-                        Text(scannedAgoText).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
-                    }
-                }
+                Text(scannedAgoText).font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
             }
             Spacer()
-            Button { model.rescan() } label: {
+            Button { startScan() } label: {
                 Label(NSLocalizedString("Re-scan", comment: ""), systemImage: "arrow.clockwise")
                     .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
             }
             .buttonStyle(.plain)
-            .disabled(model.scanning)
-            .opacity(model.scanning ? 0.4 : 1)
         }
     }
 
@@ -116,15 +184,6 @@ struct TuneUpView: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .full
         return String(format: NSLocalizedString("Scanned %@", comment: ""), f.localizedString(for: at, relativeTo: Date()))
-    }
-
-    private var scanningPlaceholder: some View {
-        VStack(spacing: 12) {
-            ProgressView().controlSize(.large).tint(accent)
-            Text(model.progress.isEmpty ? NSLocalizedString("Taking stock of the den…", comment: "") : model.progress)
-                .font(Brand.sans(13)).foregroundStyle(Brand.textSecondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 280)
     }
 
     private var tidyNote: some View {
@@ -147,7 +206,7 @@ struct TuneUpView: View {
     private func safeSetCard(_ snap: TuneUpSnapshot) -> some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
-                Eyebrow(text: "One-tap tune-up", glyph: "wand.and.stars", color: accent)
+                Eyebrow(text: "Run the safe set", glyph: "wand.and.stars", color: accent)
                 Text(NSLocalizedString("Reclaim space and refresh maintenance in a single pass — everything here is reversible.", comment: ""))
                     .font(Brand.sans(12.5)).foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -323,7 +382,7 @@ struct TuneUpView: View {
             Text(runStatusText).font(Brand.mono(12)).foregroundStyle(Brand.textSecondary)
             Spacer()
             if phase == .done {
-                Button { backToReview() } label: {
+                Button { finishRun() } label: {
                     Label(NSLocalizedString("Done", comment: ""), systemImage: "chevron.left")
                         .font(Brand.mono(11)).foregroundStyle(Brand.textSecondary)
                 }.buttonStyle(.plain)
@@ -346,7 +405,7 @@ struct TuneUpView: View {
                 return String(format: NSLocalizedString("Stopped: %@", comment: ""), m)
             }
             return NSLocalizedString("Tune-up complete.", comment: "")
-        case .review:
+        default:
             return ""
         }
     }
@@ -357,7 +416,12 @@ struct TuneUpView: View {
         return false
     }
 
-    // MARK: - Run sequencing
+    // MARK: - Scan + run sequencing
+
+    private func startScan() {
+        phase = .scanning
+        model.rescan()
+    }
 
     private func runSafeSet() {
         guard let snap = model.snapshot else { return }
@@ -413,7 +477,7 @@ struct TuneUpView: View {
             advance()
         case .finished(.failed), .finished(.cancelled):
             phase = .done
-            finalizeRun()
+            recordRun()
         default:
             break
         }
@@ -427,21 +491,22 @@ struct TuneUpView: View {
             Task { @MainActor in startStep(next) }
         } else {
             phase = .done
-            finalizeRun()
+            recordRun()
         }
     }
 
-    private func finalizeRun() {
+    private func recordRun() {
         let summary = stepSummaries.isEmpty
             ? NSLocalizedString("No changes", comment: "")
             : stepSummaries.joined(separator: " · ")
         model.recordRun(summary: summary)
     }
 
-    private func backToReview() {
+    /// "Done" → reset the flow and re-scan, so results reflect what the run
+    /// just changed.
+    private func finishRun() {
         flow.reset()
-        phase = .review
-        model.rescan()   // numbers are stale after a tune-up — refresh them
+        startScan()
     }
 
     // MARK: - Plan sheet
