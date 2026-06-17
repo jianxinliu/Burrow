@@ -432,21 +432,6 @@ struct LowSpaceBar: View {
     }
 }
 
-struct ProgressBar: View {
-    let fraction: Double
-    let color: Color
-    var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Brand.trackFill)
-                Capsule().fill(color)
-                    .frame(width: g.size.width * CGFloat(max(0, min(fraction, 1))))
-            }
-        }
-        .frame(height: 6)
-    }
-}
-
 // MARK: - Bluetooth
 
 /// Connected Bluetooth devices with their battery — surfaced from mo's
