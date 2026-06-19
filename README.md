@@ -216,7 +216,7 @@ open /Applications/Burrow.app
 
 ```bash
 brew install xcodegen mole
-git clone https://github.com/caezium/Burrow.git && cd Burrow
+git clone https://github.com/caezium/Burrow.git && cd Burrow/macos
 xcodegen generate
 xcodebuild -project Burrow.xcodeproj -scheme Burrow \
   -configuration Release -destination 'generic/platform=macOS' \
@@ -308,6 +308,7 @@ There's also an optional localhost HTTP API (`127.0.0.1:9277` — `/health`,
 ## Develop & test
 
 ```bash
+cd macos        # the macOS app lives here (monorepo: macos/ + windows/)
 xcodegen generate
 xcodebuild -project Burrow.xcodeproj -scheme Burrow \
   -configuration Debug -destination 'platform=macOS' test
