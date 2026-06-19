@@ -95,3 +95,43 @@ one final `telemetry_opt_in_changed`, flushes, then mutes; Sentry closes).
 The SDKs' local files — the two random ids and any not-yet-sent queue — stay
 on disk so a later re-enable reuses the same anonymous identity; nothing is
 transmitted while opted out. There is no server-side deletion call.
+
+## Windows app
+
+The Windows app (`windows/`, WinUI 3 / .NET 8) reports to **its own, separate
+Sentry and PostHog projects** — never the macOS projects. That keeps the two
+platforms isolated with no shared project and no cross-platform discriminator
+flag, and means nothing here changes the macOS pipeline.
+
+Same hosts as the table above (`us.i.posthog.com`; Sentry ingest from the
+release DSN). Client code:
+[`windows/Services/AppTelemetry.cs`](windows/Services/AppTelemetry.cs) (both
+SDKs) and
+[`windows/Services/TelemetryConfig.cs`](windows/Services/TelemetryConfig.cs).
+
+Same ground rules, enforced the same way:
+
+- **Opt-out, on by default.** One switch — **Settings → Share crash reports &
+  analytics** — gates both (`BurrowSettings.TelemetryEnabled`). Off → PostHog
+  is hard-muted and Sentry is `Close()`d, immediately.
+- **Inert without keys.** DSN/key are injected only at release time through
+  env vars **`BURROWWIN_SENTRY_DSN`**, **`BURROWWIN_POSTHOG_API_KEY`**, and
+  optional **`BURROWWIN_POSTHOG_HOST`** (separate from the macOS
+  `SENTRY_DSN` / `POSTHOG_API_KEY`). Local/dev builds set none, so telemetry
+  never starts.
+- **Identity is random.** An anonymous GUID persisted at
+  `%LOCALAPPDATA%\BurrowWin\telemetry-id` — never derived from hardware,
+  serial, or account.
+- **No PII.** `Sanitize()` drops the same blocked keys, anything
+  non-primitive, and any string that looks like a `\Users\` path. Events carry
+  `$ip = "0"`. Sentry runs `SendDefaultPii = false`, no traces
+  (`TracesSampleRate = 0`), no auto session tracking, and the machine name is
+  stripped in `BeforeSend`.
+
+PostHog on Windows is delivered by a small hand-rolled HTTPS `POST` to
+`/capture/` (no SDK), so the payload — and these guarantees — stay fully under
+our control. Events wired now: `app_opened` (`cold_start`),
+`telemetry_opt_in_changed` (`enabled`), plus whatever the global exception
+handlers report to Sentry (`xaml_unhandled` / `domain_unhandled` /
+`task_unobserved`). Super properties: `app_version`, `os_version` (e.g.
+`Windows 10.0.26100.0`), `arch`.
