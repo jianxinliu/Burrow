@@ -1,0 +1,208 @@
+//
+//  TuneUpModel.swift
+//  Burrow
+//
+//  The Tune-Up pane's brain (#77). On entry it runs the read-only/preview
+//  scans across the six review sources and flags what's worth a look; the
+//  result is one Codable snapshot persisted to Store so the pane shows
+//  instantly on re-entry and survives relaunch. Nothing here spawns a new
+//  process path — every scan reuses an existing engine:
+//
+//    • Cleanable junk  → `mo clean --dry-run`     (parseTaskReport summary)
+//    • Maintenance     → `mo optimize --dry-run`  (parseTaskReport groups)
+//    • Apps to remove  → `mo uninstall --list`    (MoleClient.listApps, by size)
+//    • Startup items   → StartupInventory.scanLive vs the persisted baseline
+//    • Big disk users  → `mo analyze` on ~          (DiskScanner.scan)
+//
+//  App updates are deliberately NOT auto-scanned here — that contacts Apple /
+//  vendor appcasts, which the pre-scan-on-open feedback says must stay
+//  click-gated. The updates section is a review deep-link instead.
+//
+//  NOTE (hand-test): compile-verified only. Verify the scan populates each
+//  section against a real machine and that re-entry reads the cached snapshot.
+//
+
+import SwiftUI
+import AppKit
+
+// MARK: - Persisted snapshot
+
+/// The last Tune-Up scan plus the last safe-set run. Encoded to
+/// `Store.tuneUpStateJSON`. Display strings are baked in at scan time
+/// (sizes already humanized) so the dashboard renders with zero work.
+struct TuneUpSnapshot: Codable {
+    var scannedAt: Date
+
+    // Safe set — reversible, one-tap runnable.
+    var cleanableText: String       // "383.8MB" from the clean dry-run, "" if none
+    var optimizeAreas: [String]     // optimize dry-run group titles
+
+    // Review-only — flagged here, acted on in their own panes.
+    var bigApps: [AppLite]
+    var newStartup: [String]        // login items new since the baseline
+    var startupControllable: Int    // total user-controllable login items
+    var bigDisk: [DiskLite]
+
+    // Last safe-set run.
+    var lastRunAt: Date?
+    var lastRunSummary: String?
+
+    struct AppLite: Codable, Identifiable, Hashable {
+        var id: String
+        var name: String
+        var sizeBytes: Int64
+        var uninstallName: String
+    }
+    struct DiskLite: Codable, Identifiable, Hashable {
+        var id: String
+        var name: String
+        var path: String
+        var size: Int64
+    }
+
+    /// Whether any section has something worth surfacing — drives the
+    /// "you're already tidy" empty state.
+    var hasFindings: Bool {
+        !cleanableText.isEmpty || !optimizeAreas.isEmpty || !bigApps.isEmpty
+            || !newStartup.isEmpty || !bigDisk.isEmpty
+    }
+}
+
+// MARK: - Model
+
+@MainActor
+final class TuneUpModel: ObservableObject {
+    @Published private(set) var snapshot: TuneUpSnapshot?
+    @Published private(set) var scanning = false
+    /// What the scan is doing right now — shown next to the spinner.
+    @Published private(set) var progress = ""
+
+    init() { snapshot = Self.load() }
+
+    /// First-ever entry (no cached snapshot) kicks off a scan; later entries
+    /// read the cache instantly. Re-scan is always explicit after that.
+    func scanIfNeeded() {
+        if snapshot == nil, !scanning { rescan() }
+    }
+
+    func rescan() {
+        guard !scanning else { return }
+        scanning = true
+        progress = NSLocalizedString("Looking around the den…", comment: "")
+        // Carry the last-run record across a re-scan — re-scanning doesn't undo
+        // a tune-up that already happened.
+        let prevRunAt = snapshot?.lastRunAt
+        let prevRunSummary = snapshot?.lastRunSummary
+
+        Task {
+            async let cleanable = Self.scanCleanable()
+            async let optimize = Self.scanOptimize()
+            async let apps = Self.scanBigApps()
+            async let startup = Self.scanStartup()
+            async let disk = Self.scanBigDisk()
+
+            let cleanText = await cleanable
+            let optAreas = await optimize
+            let bigApps = await apps
+            let (newStartup, controllable) = await startup
+            let bigDisk = await disk
+
+            let snap = TuneUpSnapshot(
+                scannedAt: Date(),
+                cleanableText: cleanText,
+                optimizeAreas: optAreas,
+                bigApps: bigApps,
+                newStartup: newStartup,
+                startupControllable: controllable,
+                bigDisk: bigDisk,
+                lastRunAt: prevRunAt,
+                lastRunSummary: prevRunSummary)
+            self.snapshot = snap
+            Self.save(snap)
+            self.scanning = false
+            self.progress = ""
+        }
+    }
+
+    /// Record the outcome of a safe-set run onto the current snapshot.
+    func recordRun(summary: String) {
+        guard var snap = snapshot else { return }
+        snap.lastRunAt = Date()
+        snap.lastRunSummary = summary
+        snapshot = snap
+        Self.save(snap)
+    }
+
+    // MARK: Scans (each reuses an existing engine, off the main thread)
+
+    private static func scanCleanable() async -> String {
+        await Task.detached(priority: .utility) { () -> String in
+            guard let res = try? MoEngine.shared.capture(
+                    MoCommand(target: .mo, args: ["clean", "--dry-run"], timeout: 120)),
+                  res.exitCode == 0 else { return "" }
+            let (_, summary) = parseTaskReport(res.stdout.components(separatedBy: "\n"))
+            let space = summary?.space ?? ""
+            // "0B" / "0 B" reads as nothing to do.
+            return space.replacingOccurrences(of: " ", with: "").hasPrefix("0") ? "" : space
+        }.value
+    }
+
+    private static func scanOptimize() async -> [String] {
+        await Task.detached(priority: .utility) { () -> [String] in
+            guard let res = try? MoEngine.shared.capture(
+                    MoCommand(target: .mo, args: ["optimize", "--dry-run"], timeout: 120)),
+                  res.exitCode == 0 else { return [] }
+            let (groups, _) = parseTaskReport(res.stdout.components(separatedBy: "\n"))
+            return groups.map { TaskReportText.title($0.title) }
+        }.value
+    }
+
+    private static func scanBigApps() async -> [TuneUpSnapshot.AppLite] {
+        await Task.detached(priority: .utility) { () -> [TuneUpSnapshot.AppLite] in
+            MoleClient.listApps()
+                .filter { $0.sizeBytes > 100_000_000 }       // only apps worth reviewing
+                .sorted { $0.sizeBytes > $1.sizeBytes }
+                .prefix(8)
+                .map { TuneUpSnapshot.AppLite(id: $0.id, name: $0.name,
+                                              sizeBytes: $0.sizeBytes,
+                                              uninstallName: $0.uninstallName) }
+        }.value
+    }
+
+    private static func scanStartup() async -> ([String], Int) {
+        await Task.detached(priority: .utility) { () -> ([String], Int) in
+            let live = StartupInventory.scanLive()
+            let baseline = Set(Store.startupBaselineJSON.data(using: .utf8)
+                .flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? [])
+            // "New" only means something once a baseline exists (the watcher
+            // writes it hourly); before then, surface nothing as new.
+            let new = baseline.isEmpty ? [] : live.filter { !baseline.contains($0.id) }
+            let controllable = live.filter { $0.controllable }.count
+            return (new.map(\.label), controllable)
+        }.value
+    }
+
+    private static func scanBigDisk() async -> [TuneUpSnapshot.DiskLite] {
+        await Task.detached(priority: .utility) { () -> [TuneUpSnapshot.DiskLite] in
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            guard let result = try? DiskScanner.scan(home) else { return [] }
+            return result.entries
+                .sorted { $0.size > $1.size }
+                .prefix(6)
+                .map { TuneUpSnapshot.DiskLite(id: $0.id, name: $0.name,
+                                               path: $0.path, size: $0.size) }
+        }.value
+    }
+
+    // MARK: Persistence
+
+    private static func load() -> TuneUpSnapshot? {
+        Store.tuneUpStateJSON.data(using: .utf8)
+            .flatMap { try? JSONDecoder().decode(TuneUpSnapshot.self, from: $0) }
+    }
+
+    private static func save(_ s: TuneUpSnapshot) {
+        Store.tuneUpStateJSON = (try? JSONEncoder().encode(s))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+}

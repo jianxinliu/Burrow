@@ -26,3 +26,6 @@ build_test/
 
 # Telemetry secrets (never commit)
 scripts/release.env
+
+# local build output (this session's DerivedData)
+build_dd/

@@ -7,21 +7,23 @@
 
 # Burrow
 
-**A free, open-source, native macOS GUI for the [Mole](https://github.com/tw93/Mole) CLI (`mo`) — clean, uninstall, optimize, analyze disk, and watch live status. Plus long-range history and an MCP server for AI agents.**
+**A free, open-source GUI for the [Mole](https://github.com/tw93/Mole) (`mo`) engine — clean, uninstall, optimize, analyze disk, and watch live system status. Plus long-range history and an MCP server for AI agents. Native on macOS, now coming to Windows.**
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
+![Windows 10/11 — beta](https://img.shields.io/badge/Windows-10%2F11%20·%20beta-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
-![Requires mole](https://img.shields.io/badge/requires-brew%20install%20mole-orange)
 
-Burrow wraps the free, open-source `mo` CLI in a native Mac app: clean junk,
-purge dev artifacts, sweep leftover installers, uninstall apps, run safe
-maintenance, map your disk, and watch live system status — all in one
-translucent window. On top of that it adds things the CLI doesn't have:
-a **long-running history** of your Mac's metrics in a local SQLite database,
-an **MCP server** so any AI agent (Claude Code, Cursor, Codex…) can ask
-"what's been happening on this Mac.", and a lot more planned features to come!
+Burrow wraps the free, open-source Mole engine in a native desktop app: clean
+junk, purge dev artifacts, sweep leftover installers, uninstall apps, run safe
+maintenance, map your disk, and watch live system status — in one window. On top
+of that it adds things the CLI doesn't have: a **long-running history** of your
+machine's metrics in a local store, an **MCP server** so any AI agent (Claude
+Code, Cursor, Codex…) can ask "what's been happening on this machine," and more.
 
-`brew install --cask caezium/tap/burrow`
+**macOS** is the mature, signed-soon flagship. **Windows** is in active
+beta — same brand, same tools, [tracking parity here](#platforms).
+
+`brew install --cask caezium/tap/burrow`  ·  Windows: [build from source](#platforms)
 
 <a href="https://www.star-history.com/?repos=caezium%2FBurrow&type=timeline&legend=top-left">
  <picture>
@@ -33,6 +35,7 @@ an **MCP server** so any AI agent (Claude Code, Cursor, Codex…) can ask
 
 ## Contents
 
+- [Platforms](#platforms)
 - [Screenshots](#screenshots)
 - [The tools](#the-tools)
 - [How Burrow compares to other tools](#how-burrow-compares-to-other-tools)
@@ -45,6 +48,21 @@ an **MCP server** so any AI agent (Claude Code, Cursor, Codex…) can ask
 - [Develop & test](#develop--test)
 - [Architecture](#architecture)
 - [Attribution & license](#attribution--license)
+
+## Platforms
+
+| | macOS | Windows |
+|---|---|---|
+| Status | **Stable** — flagship | **Beta** — in active development |
+| Engine | `mo` (Go CLI, via Homebrew) | bundled Mole engine (PowerShell port) |
+| UI | SwiftUI, translucent menu-bar app | WinUI 3 / .NET 8 |
+| Install | `brew install --cask caezium/tap/burrow` | build from source (installer coming) |
+| Source | [`macos/`](macos/) | [`windows/`](windows/) |
+
+Both apps live in this one repo, side by side, sharing this README, the landing
+site, and releases. The macOS sections below are the reference; Windows is
+reaching feature parity tool-by-tool — see [`windows/`](windows/) and its
+[architecture notes](windows/docs/windows-architecture.md).
 
 ## Screenshots
 
@@ -135,22 +153,25 @@ A live, glanceable read of your Mac's vitals, refreshed continuously:
 
 ## How Burrow compares to other tools
 
-A factual feature/scope comparison. **mole.fit** is from the original author of mo — buy it ($9) if you want that and to fund `mo`.
+A factual feature/scope comparison. The competitor columns are the **macOS**
+landscape; the Windows column reflects Burrow's **in-development beta** (history
+is JSON-backed for now, signing not yet wired). **mole.fit** is from the original
+author of `mo` — buy it ($19) if you want that and to fund `mo`.
 
-|  | Burrow | mole.fit | CleanMyMac | Pearcleaner | `mo` / ncdu |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Price | Free | $9 once | Subscription | Free | Free |
-| Open source | MIT | – | – | ✅ | ✅ (`mo`) |
-| Signed / notarized | in progress | ✅ | ✅ | ✅ | n/a |
-| Junk cleanup | ✅ | ✅ | ✅ | – | ✅ (`mo`) |
-| Dev-artifact purge | ✅ | ✅ | partial | – | ✅ (`mo`) |
-| Leftover-installer sweep | ✅ | ✅ | ✅ | – | ✅ (`mo`) |
-| Uninstall + leftovers | ✅ | ✅ | ✅ | ✅ *(focus)* | ✅ (`mo`) |
-| Disk treemap | ✅ | ✅ | ✅ | – | ncdu *(TUI)* |
-| Live system monitor | ✅ | ✅ | partial | – | – |
-| Long-term metric history | ✅ | – | – | – | – |
-| MCP / agent API | ✅ | – | – | – | – |
-| GUI | ✅ | ✅ | ✅ | ✅ | – *(terminal)* |
+|  | Burrow (macOS) | Burrow (Windows · beta) | mole.fit | CleanMyMac | Pearcleaner | `mo` / ncdu |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Price | Free | Free | $19 once | Subscription | Free | Free |
+| Open source | MIT | MIT | – | – | ✅ | ✅ (`mo`) |
+| Signed / notarized | in progress | planned | ✅ | ✅ | ✅ | n/a |
+| Junk cleanup | ✅ | ✅ | ✅ | ✅ | – | ✅ (`mo`) |
+| Dev-artifact purge | ✅ | ✅ | ✅ | partial | – | ✅ (`mo`) |
+| Leftover-installer sweep | ✅ | ✅ | ✅ | ✅ | – | ✅ (`mo`) |
+| Uninstall + leftovers | ✅ | ✅ | ✅ | ✅ | ✅ *(focus)* | ✅ (`mo`) |
+| Disk treemap | ✅ | ✅ | ✅ | ✅ | – | ncdu *(TUI)* |
+| Live system monitor | ✅ | ✅ | ✅ | partial | – | – |
+| Long-term metric history | ✅ | ✅ *(JSON)* | – | – | – | – |
+| MCP / agent API | ✅ | ✅ | – | – | – | – |
+| GUI | ✅ | ✅ | ✅ | ✅ | ✅ | – *(terminal)* |
 
 ## Settings
 
@@ -216,7 +237,7 @@ open /Applications/Burrow.app
 
 ```bash
 brew install xcodegen mole
-git clone https://github.com/caezium/Burrow.git && cd Burrow
+git clone https://github.com/caezium/Burrow.git && cd Burrow/macos
 xcodegen generate
 xcodebuild -project Burrow.xcodeproj -scheme Burrow \
   -configuration Release -destination 'generic/platform=macOS' \
@@ -308,6 +329,7 @@ There's also an optional localhost HTTP API (`127.0.0.1:9277` — `/health`,
 ## Develop & test
 
 ```bash
+cd macos        # the macOS app lives here (monorepo: macos/ + windows/)
 xcodegen generate
 xcodebuild -project Burrow.xcodeproj -scheme Burrow \
   -configuration Debug -destination 'platform=macOS' test
@@ -350,9 +372,11 @@ design system); Settings, History, and Activity are panes in that same window.
 
 ## What's Next & Contributing
 
-**Continuous Updates & Windows Support:** 
-Burrow is in active development! We will continuously roll out new updates, features, and improvements. We are also actively working on bringing Burrow to **Windows** in the near future!
-We want Burrow to be your Mac's memory and an agent's hands.
+**Windows is here (in beta).** Burrow now has a native WinUI app under
+[`windows/`](windows/), reaching parity with the Mac app tool-by-tool. macOS
+remains the flagship and keeps shipping continuous updates. We want Burrow to be
+your machine's memory and an agent's hands — on every desktop.
 
-**Become a Contributor:** 
-Burrow is a community-driven project, and we would absolutely love your help to shape its future. Whether it's fixing bugs, building new features, improving documentation, or helping with the upcoming Windows version, everyone is warmly welcome to join us. Feel free to open issues, submit pull requests, or share your ideas. We look forward to having you as a contributor!
+**Become a Contributor.** Burrow is community-driven and we'd love your help —
+fixing bugs, building features, improving docs, or pushing the Windows port
+forward. Open issues, send PRs, or share ideas. Everyone's welcome.
