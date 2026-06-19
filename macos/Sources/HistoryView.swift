@@ -410,7 +410,7 @@ struct HistoryView: View {
                     Spacer()
                     if series.count > 1 { legend(series) }
                 }
-                chartBody(series, marks: m.marks, height: 240)
+                chartBody(series, marks: m.marks, height: 240, title: m.title)
             }
         }
     }
@@ -467,7 +467,7 @@ struct HistoryView: View {
 
     @ViewBuilder
     private func chartBody(_ series: [(name: String, points: [ChartPoint], color: Color)],
-                           marks: ChartMarks, height: CGFloat) -> some View {
+                           marks: ChartMarks, height: CGFloat, title: String) -> some View {
         let allEmpty = series.allSatisfy { $0.points.isEmpty }
         let style = AxisStyle.forRangeMinutes(range.minutes)
         let window = Double(range.minutes * 60)
