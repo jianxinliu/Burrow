@@ -43,12 +43,13 @@ enum AppSort: String, CaseIterable {
     var label: String { NSLocalizedString(rawValue, comment: "") }
 }
 
-enum SoftwareSegment { case uninstall, updates, startup }
+enum SoftwareSegment { case uninstall, updates, startup, services }
 
 struct SoftwareView: View {
     @StateObject private var model = SoftwareModel()
     @StateObject private var updates = UpdatesModel()
     @StateObject private var startup = StartupModel()
+    @StateObject private var services = BrewServicesModel()
     var isActive: Bool = true
 
     var body: some View {
@@ -61,8 +62,12 @@ struct SoftwareView: View {
                 bottomBar.padding(.horizontal, 18).padding(.vertical, 10)
             }
         }
-        .onAppear { if isActive { model.startIfNeeded() } }
-        .onChange(of: isActive) { _, now in if now { model.startIfNeeded() } }
+        // Pre-warm both LOCAL segments when the pane opens, so switching to
+        // Startup is instant instead of a fresh scan-on-click. Updates is left
+        // out on purpose — it reaches out to Apple / vendor appcasts, so it
+        // stays gated behind an explicit check (privacy).
+        .onAppear { if isActive { model.startIfNeeded(); startup.startIfNeeded() } }
+        .onChange(of: isActive) { _, now in if now { model.startIfNeeded(); startup.startIfNeeded() } }
     }
 
     // MARK: - Toolbar
@@ -127,6 +132,7 @@ struct SoftwareView: View {
             seg("Uninstall", .uninstall)
             seg("Updates", .updates)
             seg("Startup", .startup)
+            if BrewClient.isInstalled { seg("Services", .services) }
         }
         .padding(3)
         .background(Capsule().fill(Color.black.opacity(0.22)))
@@ -185,6 +191,8 @@ struct SoftwareView: View {
             UpdatesView(model: updates, apps: model.apps)
         case .startup:
             StartupView(model: startup)
+        case .services:
+            BrewServicesView(model: services)
         case .uninstall:
             if model.loading {
                 VStack { Spacer(); ProgressView("Reading installed apps…").controlSize(.large).tint(Tool.apps.accent)

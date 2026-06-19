@@ -76,8 +76,13 @@ struct UpdatesView: View {
                     .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
             }
             Spacer()
-            if model.checking {
-                ProgressView().controlSize(.small)
+            if model.checking || model.brewSurfacing {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(model.checking ? NSLocalizedString("Checking…", comment: "")
+                                        : NSLocalizedString("Checking Homebrew…", comment: ""))
+                        .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
+                }
             }
             PillButton(title: model.checked ? "Check again" : "Check for updates", filled: !model.checked) {
                 model.checkNow()
@@ -173,8 +178,13 @@ struct UpdatesView: View {
                     Text(item.name).font(Brand.sans(13, .medium)).foregroundStyle(Brand.textPrimary).lineLimit(1)
                     Chip(text: UpdateSources.Source.homebrew.badge, color: Brand.textSecondary)
                 }
-                Text(verbatim: "\(item.installed) → \(item.latest)")
-                    .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
+                if model.upgrading.contains(item.id), !model.brewPhrase.isEmpty {
+                    Text(model.brewPhrase)
+                        .font(Brand.mono(10)).foregroundStyle(Tool.apps.accent).lineLimit(1)
+                } else {
+                    Text(verbatim: "\(item.installed) → \(item.latest)")
+                        .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary)
+                }
             }
             Spacer(minLength: 8)
             if model.upgrading.contains(item.id) {
@@ -247,6 +257,10 @@ final class UpdatesModel: ObservableObject {
     @Published var checked = false
     @Published var error: String?
     @Published var upgrading: Set<String> = []
+    /// Live brew step during an upgrade (H: brew-upgrade streaming).
+    @Published var brewPhrase: String = ""
+    /// True while the on-open `brew outdated` surface is running (shows a spinner).
+    @Published var brewSurfacing = false
     private var preparedCount = -1
     private var brewSurfaced = false
 
@@ -285,9 +299,13 @@ final class UpdatesModel: ObservableObject {
     func autoSurface() {
         guard !brewSurfaced, !checking else { return }
         brewSurfaced = true
+        brewSurfacing = true
         Task {
             let brews = await Self.brewOutdated()
-            await MainActor.run { if self.brewItems.isEmpty { self.brewItems = brews } }
+            await MainActor.run {
+                if self.brewItems.isEmpty { self.brewItems = brews }
+                self.brewSurfacing = false
+            }
         }
     }
 
@@ -388,8 +406,11 @@ final class UpdatesModel: ObservableObject {
         guard !upgrading.contains(item.id) else { return }
         upgrading.insert(item.id)
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = Self.runBrew(brew, ["upgrade", item.name], timeout: 1800)
+            Self.runBrewStreaming(brew, ["upgrade", item.name], timeout: 1800) { line in
+                if let phrase = BrewProgress.phrase(line) { Task { @MainActor in self.brewPhrase = phrase } }
+            }
             Task { @MainActor in
+                self.brewPhrase = ""
                 self.upgrading.remove(item.id)
                 self.brewItems = await Self.brewOutdated()
             }
@@ -402,8 +423,11 @@ final class UpdatesModel: ObservableObject {
         let ids = Set(brewItems.map(\.id))
         upgrading.formUnion(ids)
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = Self.runBrew(brew, ["upgrade"], timeout: 3600)
+            Self.runBrewStreaming(brew, ["upgrade"], timeout: 3600) { line in
+                if let phrase = BrewProgress.phrase(line) { Task { @MainActor in self.brewPhrase = phrase } }
+            }
             Task { @MainActor in
+                self.brewPhrase = ""
                 self.upgrading.subtract(ids)
                 self.brewItems = await Self.brewOutdated()
             }
@@ -438,6 +462,42 @@ final class UpdatesModel: ObservableObject {
         } catch {
             return BrewResult(out: "", err: "\(error)", code: -1)
         }
+    }
+
+    /// Stream a brew run, calling `onLine` per stdout line (H: live progress).
+    /// The readability handler drains the pipe so waitUntilExit can't deadlock;
+    /// a work item terminates on timeout.
+    private nonisolated static func runBrewStreaming(_ brew: String, _ args: [String],
+                                                     timeout: TimeInterval,
+                                                     onLine: @escaping (String) -> Void) {
+        var env = Foundation.ProcessInfo.processInfo.environment
+        let dir = (brew as NSString).deletingLastPathComponent
+        env["PATH"] = "\(dir):/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: brew)
+        p.arguments = args
+        p.environment = env
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        let handle = pipe.fileHandleForReading
+        var buffer = Data()
+        handle.readabilityHandler = { fh in
+            let chunk = fh.availableData
+            guard !chunk.isEmpty else { return }
+            buffer.append(chunk)
+            while let nl = buffer.firstIndex(of: 0x0A) {
+                let line = String(decoding: buffer[buffer.startIndex..<nl], as: UTF8.self)
+                buffer.removeSubrange(buffer.startIndex...nl)
+                onLine(line)
+            }
+        }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+        do { try p.run() } catch { handle.readabilityHandler = nil; return }
+        p.waitUntilExit()
+        killer.cancel()
+        handle.readabilityHandler = nil
     }
 
     /// Pure parser for `brew outdated --json=v2` — unit-tested against captured

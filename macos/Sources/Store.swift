@@ -446,6 +446,61 @@ enum Store {
         set { write(newValue, "smart_reminders_enabled") }
     }
 
+    /// New-LaunchAgent / login-item watcher (D.12). On by default — a
+    /// persistence item appearing is a lightweight security signal most
+    /// utilities miss, so this is one of the few default-on notices.
+    static var watchStartupItems: Bool {
+        get { d.object(forKey: "watch_startup_items") as? Bool ?? true }
+        set { write(newValue, "watch_startup_items") }
+    }
+
+    /// Persisted baseline for the startup watcher — a JSON `[String]` of item
+    /// ids. Not user-facing; it's the watcher's diff anchor.
+    static var startupBaselineJSON: String {
+        get { d.string(forKey: "startup_baseline_json") ?? "" }
+        set { write(newValue, "startup_baseline_json") }
+    }
+
+    /// The Tune-Up pane's last scan + last run, as a JSON `TuneUpSnapshot`.
+    /// Persisted so the pane shows instantly on entry and survives relaunch
+    /// (#77's "persisted status across pane switches AND relaunch"). Not
+    /// user-facing — the pane owns the encode/decode.
+    static var tuneUpStateJSON: String {
+        get { d.string(forKey: "tune_up_state_json") ?? "" }
+        set { write(newValue, "tune_up_state_json") }
+    }
+
+    /// Threshold alerts (CPU pegged / memory pressure high). Off by default —
+    /// a taste thing, like the smart reminders.
+    static var thresholdAlertsEnabled: Bool {
+        get { d.object(forKey: "threshold_alerts_enabled") as? Bool ?? false }
+        set { write(newValue, "threshold_alerts_enabled") }
+    }
+
+    /// The CPU-usage % at which a sustained-high alert fires (the rule's `high`
+    /// edge; `low` hysteresis is derived). Default 90, clamped to a sane band so
+    /// a stepper can't set a useless 0% / 100% trigger.
+    static var cpuAlertThreshold: Int {
+        get { let v = d.object(forKey: "cpu_alert_threshold") as? Int ?? 90; return min(100, max(50, v)) }
+        set { write(min(100, max(50, newValue)), "cpu_alert_threshold") }
+    }
+
+    /// The memory-used % at which a sustained-high alert fires. Default 90.
+    static var memAlertThreshold: Int {
+        get { let v = d.object(forKey: "mem_alert_threshold") as? Int ?? 90; return min(100, max(50, v)) }
+        set { write(min(100, max(50, newValue)), "mem_alert_threshold") }
+    }
+
+    /// Bearer token for the query server's SSE /events stream (B.6). Generated
+    /// once and persisted; agents pass it as `?token=…`. The server is loopback-
+    /// only, so this just stops other local processes/pages from subscribing.
+    static var queryAuthToken: String {
+        if let t = d.string(forKey: "query_auth_token"), !t.isEmpty { return t }
+        let t = UUID().uuidString
+        write(t, "query_auth_token")
+        return t
+    }
+
     // Reminder throttle state (not user-facing): hysteresis flags so a
     // metric hovering at its threshold can't flap, timestamps for the
     // weekly cooldowns. See ReminderRules (Notifications.swift).
@@ -468,6 +523,16 @@ enum Store {
     static var lastTrashReminderAt: Date? {
         get { d.object(forKey: "last_trash_reminder_at") as? Date }
         set { write(newValue, "last_trash_reminder_at") }
+    }
+
+    static var lastBackupReminderAt: Date? {
+        get { d.object(forKey: "last_backup_reminder_at") as? Date }
+        set { write(newValue, "last_backup_reminder_at") }
+    }
+
+    static var lastSmartReminderAt: Date? {
+        get { d.object(forKey: "last_smart_reminder_at") as? Date }
+        set { write(newValue, "last_smart_reminder_at") }
     }
 
     // MARK: - Onboarding

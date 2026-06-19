@@ -39,7 +39,7 @@ struct StatusView: View {
                         gpuTile(s).frame(minHeight: row1H)
                     }
                     HStack(spacing: 13) {
-                        DiskCard(s: s, liveRead: io.readMBs, liveWrite: io.writeMBs, minHeight: row2H)
+                        DiskCard(s: s, liveRead: io.readMBs, liveWrite: io.writeMBs, minHeight: row2H, db: model.db)
                         netTile(s).frame(minHeight: row2H)
                         fanTile(s).frame(minHeight: row2H)
                     }
@@ -270,6 +270,9 @@ struct DiskCard: View {
     var liveRead: Double? = nil
     var liveWrite: Double? = nil
     var minHeight: CGFloat? = nil
+    /// When set, annotate the tile with a disk-full forecast (A.3).
+    var db: DB? = nil
+    @State private var forecastText: String? = nil
 
     var body: some View {
         let disk = s.disks.first
@@ -293,8 +296,31 @@ struct DiskCard: View {
                 Text(String(format: NSLocalizedString("%.0f%% used · R %.0f · W %.0f MB/s", comment: ""),
                             pct, liveRead ?? s.diskIO.readRate, liveWrite ?? s.diskIO.writeRate))
                     .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary).lineLimit(1)
+                if let f = forecastText {
+                    Text(f).font(Brand.mono(10)).foregroundStyle(Brand.textSecondary).lineLimit(1)
+                }
             }
         }
+        .task { computeForecast() }
+    }
+
+    /// Annotate with a disk-full forecast over the last 30 days of free-space
+    /// history (A.3). Silent unless the forecaster is willing to name a date.
+    private func computeForecast() {
+        guard let db else { return }
+        let now = Int(Date().timeIntervalSince1970)
+        let series = MetricsStore(db: db).diskFreeSeries(mount: nil, .init(since: now - 30 * 86_400, until: now))
+        guard series.count >= 2, let days = DiskForecast.forecast(series, now: now).daysUntilFull else {
+            forecastText = nil
+            return
+        }
+        forecastText = String(format: NSLocalizedString("Full in ~%@", comment: ""), phrase(days))
+    }
+
+    private func phrase(_ days: Double) -> String {
+        if days < 14 { return String(format: NSLocalizedString("%d days", comment: ""), Int(days.rounded())) }
+        if days < 60 { return String(format: NSLocalizedString("%d weeks", comment: ""), Int((days / 7).rounded())) }
+        return String(format: NSLocalizedString("%d months", comment: ""), Int((days / 30).rounded()))
     }
 }
 
@@ -827,7 +853,7 @@ final class StatusModel: ObservableObject {
     /// — the table then falls back to the snapshot's engine top five.
     @Published var processes: [ProcessInfo] = []
 
-    private let db: DB
+    let db: DB
     private let live: LiveFeed
     private let feeds: FeedHub
 

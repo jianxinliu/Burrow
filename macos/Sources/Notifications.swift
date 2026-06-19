@@ -88,6 +88,24 @@ enum ReminderRules {
         return days
     }
 
+    /// Days without a Time Machine backup before the nudge speaks, weekly
+    /// throttled. A nil `daysAgo` (no backups configured / unknown) stays
+    /// silent — we never invent a backup history.
+    static let backupOverdueDays = 7
+    static func backupOverdue(daysAgo: Int?, lastNotice: Date?, now: Date = Date()) -> Int? {
+        guard let daysAgo, daysAgo >= backupOverdueDays else { return nil }
+        if let lastNotice, now.timeIntervalSince(lastNotice) < Double(repeatCooldownDays) * 86_400 { return nil }
+        return daysAgo
+    }
+
+    /// SMART self-test failing → one alert, weekly throttled. A verified or
+    /// unreadable (nil) verdict stays silent: we never cry wolf on unknown.
+    static func smartFailing(verified: Bool?, lastNotice: Date?, now: Date = Date()) -> Bool {
+        guard verified == false else { return false }
+        if let lastNotice, now.timeIntervalSince(lastNotice) < Double(repeatCooldownDays) * 86_400 { return false }
+        return true
+    }
+
     /// Most recent completed `clean` session from `mo history`.
     /// `started_at` is "yyyy-MM-dd HH:mm:ss" in local time; rows that
     /// don't parse contribute nothing (we never guess).
@@ -140,6 +158,25 @@ final class BurrowNotifier: NSObject {
         post(content, id: "burrow-op-\(UUID().uuidString)")
     }
 
+    /// Post a threshold-alert notification (D.12). Called by ThresholdMonitor
+    /// when a CPU/memory rule fires (once per episode).
+    func thresholdAlert(ruleID: String, value: Double) {
+        guard !inert else { return }
+        let title: String, body: String
+        switch ruleID {
+        case "cpu":
+            title = NSLocalizedString("CPU usage is high", comment: "")
+            body = String(format: NSLocalizedString("CPU has been pegged at %.0f%%.", comment: ""), value)
+        case "memory":
+            title = NSLocalizedString("Memory pressure is high", comment: "")
+            body = String(format: NSLocalizedString("Memory is at %.0f%%.", comment: ""), value)
+        default:
+            return
+        }
+        postReminder(title: title, body: body, pane: nil, id: "burrow-threshold-\(ruleID)")
+        EventHub.shared.broadcast(SSEFrame.event("threshold", data: "{\"rule\":\"\(ruleID)\",\"value\":\(value)}"))
+    }
+
     // MARK: Smart reminders
 
     /// Started once from AppDelegate.startServices. Hourly sweep — each
@@ -149,12 +186,43 @@ final class BurrowNotifier: NSObject {
     func startReminders() {
         guard !inert, reminderTimer == nil else { return }
         let timer = Timer(timeInterval: 3_600, repeats: true) { _ in
-            Task { @MainActor in BurrowNotifier.shared.checkReminders() }
+            Task { @MainActor in
+                BurrowNotifier.shared.checkReminders()
+                BurrowNotifier.shared.checkStartupWatcher()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         reminderTimer = timer
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
             self?.checkReminders()
+            self?.checkStartupWatcher()
+        }
+    }
+
+    /// New-persistence-item watcher (D.12). Scans login items / LaunchAgents
+    /// off the main thread, diffs against the stored baseline, and posts once
+    /// per newly-appeared item. First run only establishes the baseline (no
+    /// alarm); gated by its own default-on toggle, independent of the
+    /// taste-based smart reminders.
+    func checkStartupWatcher() {
+        guard !inert, Store.watchStartupItems else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let items = StartupInventory.scanLive()
+            Task { @MainActor in
+                guard let self else { return }
+                let prev = Store.startupBaselineJSON
+                let result = StartupWatcher.check(previousBaselineJSON: prev.isEmpty ? nil : prev,
+                                                  current: items)
+                Store.startupBaselineJSON = result.baselineJSON
+                for item in result.newItems.prefix(5) {
+                    self.postReminder(
+                        title: NSLocalizedString("A new startup item appeared", comment: ""),
+                        body: String(format: NSLocalizedString("“%@” now launches automatically. If you didn't add it, review it.", comment: ""), item.label),
+                        pane: "apps", id: "burrow-startup-\(item.id)")
+                    let safeID = item.id.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+                    EventHub.shared.broadcast(SSEFrame.event("startup_item", data: "{\"id\":\"\(safeID)\"}"))
+                }
+            }
         }
     }
 
@@ -169,14 +237,19 @@ final class BurrowNotifier: NSObject {
             let free = Self.freeDiskSpace()
             let trashBytes = Self.trashSizeBytes()
             let lastClean = probeHistory ? ReminderRules.lastCompletedClean(MoleHistory.load()) : nil
+            // Backup + SMART change slowly — probe on the daily cadence only.
+            let backupDays = probeHistory ? BackupStatus.lastBackupDaysAgo() : nil
+            let smart = probeHistory ? DiskHealth.smartVerified() : nil
             Task { @MainActor in
-                self?.evaluateReminders(free: free, trashBytes: trashBytes, lastClean: lastClean)
+                self?.evaluateReminders(free: free, trashBytes: trashBytes, lastClean: lastClean,
+                                        backupDaysAgo: backupDays, smartVerified: smart)
             }
         }
     }
 
     private func evaluateReminders(free: (fraction: Double, freeBytes: Int64)?,
-                                   trashBytes: Int64, lastClean: Date?) {
+                                   trashBytes: Int64, lastClean: Date?,
+                                   backupDaysAgo: Int? = nil, smartVerified: Bool? = nil) {
         guard Store.smartRemindersEnabled else { return }
 
         if let free {
@@ -209,6 +282,22 @@ final class BurrowNotifier: NSObject {
                 title: String(format: NSLocalizedString("It's been %d days since your last clean", comment: ""), days),
                 body: NSLocalizedString("Caches grow back on their own — a quick scan shows what's reclaimable.", comment: ""),
                 pane: "clean", id: "burrow-reminder-clean")
+        }
+
+        if let days = ReminderRules.backupOverdue(daysAgo: backupDaysAgo, lastNotice: Store.lastBackupReminderAt) {
+            Store.lastBackupReminderAt = Date()
+            postReminder(
+                title: NSLocalizedString("Time Machine backup is overdue", comment: ""),
+                body: String(format: NSLocalizedString("Your last backup was %d days ago. Connect your backup drive to catch up.", comment: ""), days),
+                pane: nil, id: "burrow-reminder-backup")
+        }
+
+        if ReminderRules.smartFailing(verified: smartVerified, lastNotice: Store.lastSmartReminderAt) {
+            Store.lastSmartReminderAt = Date()
+            postReminder(
+                title: NSLocalizedString("Your disk reports a SMART failure", comment: ""),
+                body: NSLocalizedString("The drive's self-test is failing. Back up your data now — this can precede drive failure.", comment: ""),
+                pane: nil, id: "burrow-reminder-smart")
         }
     }
 

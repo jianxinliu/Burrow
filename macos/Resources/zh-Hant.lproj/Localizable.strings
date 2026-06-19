@@ -288,8 +288,48 @@
 "Close" = "關閉";
 "Mole CLI not found" = "找不到 Mole CLI";
 
-/* Home (Overview / History / Activity) + Explain */
+/* Home (Overview / History / Activity / Report) + Explain */
 "Overview" = "總覽";
+"Report" = "報告";
+"Doctor" = "診斷";
+"Diagnostics" = "系統診斷";
+"Dev hygiene" = "開發清理";
+"No developer caches found." = "未發現開發者快取。";
+"Clear" = "清理";
+"Move this cache to the Trash?" = "將此快取移到垃圾桶？";
+"ports" = "連接埠";
+"Ports" = "連接埠";
+"Listening ports" = "監聽連接埠";
+"See who's listening." = "看看誰在監聽。";
+"Quit this process?" = "退出此程序？";
+"tuneup" = "調校";
+"Tune-Up" = "調校";
+"One pass, a tidier den." = "一次整理，洞穴更整潔。";
+"Safe to run" = "可安全執行";
+"Needs review" = "需要審查";
+"Run safe set" = "執行安全項";
+"Clear %@ cache" = "清理 %@ 快取";
+"Review startup item: %@" = "審查啟動項：%@";
+"Nothing to tune up — you're clean." = "沒有需要調校的內容——很乾淨。";
+"restore" = "復原";
+"Restore" = "復原";
+"Put back what the last clean moved." = "把上次清理移走的放回原處。";
+"Restore last cleanup" = "復原上次清理";
+"Only Trash-based removals can be restored — cache deletions are permanent." = "僅可復原移到垃圾桶的項目——快取刪除是永久性的。";
+"No restorable items found." = "未找到可復原的項目。";
+"Top processes in selection" = "所選區間內的主要程序";
+"No process samples in that window." = "該區間內沒有程序取樣。";
+"Full in ~%@" = "約 %@ 後寫滿";
+"%d days" = "%d 天";
+"%d weeks" = "%d 週";
+"%d months" = "%d 個月";
+"Uncommitted or unpushed git changes in this repo" = "此儲存庫有未提交或未推送的 git 變更";
+"A new startup item appeared" = "出現了新的啟動項";
+"“%@” now launches automatically. If you didn't add it, review it." = "“%@” 現在會自動啟動。如果不是你新增的，請檢查它。";
+"CPU usage is high" = "CPU 使用率過高";
+"CPU has been pegged at %.0f%%." = "CPU 已持續滿載於 %.0f%%。";
+"Memory pressure is high" = "記憶體壓力過高";
+"Memory is at %.0f%%." = "記憶體使用率為 %.0f%%。";
 "Explain" = "解讀";
 
 /* Language switch */

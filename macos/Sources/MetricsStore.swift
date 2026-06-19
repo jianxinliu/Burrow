@@ -345,6 +345,42 @@ struct MetricsStore {
                              stats: stats)
     }
 
+    // MARK: Disk free history
+
+    /// Free-bytes series for a volume over the window — `total − used` per
+    /// snapshot, the input to `DiskForecast`. `mount == nil` picks the largest
+    /// volume by total size (the main drive); a value matches that mount
+    /// exactly. Snapshots with no matching disk are skipped, not zero-filled.
+    func diskFreeSeries(mount: String?, _ w: Window, maxPoints: Int = 720)
+        -> [(ts: Int, freeBytes: Double)] {
+        snapshots(w, maxPoints: maxPoints).snapshots.compactMap { s in
+            let disk: DiskStatus?
+            if let m = mount {
+                disk = s.status.disks.first { $0.mount == m }
+            } else {
+                disk = s.status.disks.max { $0.total < $1.total }
+            }
+            guard let d = disk else { return nil }
+            let free = d.total > d.used ? d.total - d.used : 0
+            return (s.ts, Double(free))
+        }
+    }
+
+    // MARK: Per-process CPU history
+
+    /// Per-process CPU samples over the window: process name → one CPU% value
+    /// per snapshot it appeared in. The input to anomaly baselining (A.2) —
+    /// recent vs prior-period medians per process.
+    func processCPUSamples(_ w: Window, maxPoints: Int = 720) -> [String: [Double]] {
+        var out: [String: [Double]] = [:]
+        for s in snapshots(w, maxPoints: maxPoints).snapshots {
+            for p in (s.status.topProcesses ?? []) {
+                out[p.name, default: []].append(p.cpu)
+            }
+        }
+        return out
+    }
+
     // MARK: Reader staleness
 
     struct ReaderStatus {

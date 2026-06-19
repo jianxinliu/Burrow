@@ -119,6 +119,9 @@ final class LiveFeed: ObservableObject {
         assert(Thread.isMainThread, "LiveFeed must publish on the main thread")
         lastSnapshot = s
         sampledAt = at
+        // Threshold alerts ride the same snapshot stream (D.12) — off by
+        // default, inert under XCTest, so this is a no-op unless opted in.
+        ThresholdMonitor.shared.evaluate(s, at: at)
     }
 
     /// nil rate = no usable delta this tick (first tick, counter reset) —

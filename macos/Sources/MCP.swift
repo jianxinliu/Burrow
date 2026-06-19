@@ -275,6 +275,59 @@ struct ToolCatalog {
                 ] as [String: Any],
             ],
             [
+                "name": "burrow_disk_forecast",
+                "description": "Forecast when a volume runs out of space, from free-space history. `days` (default 30, 7-365) is the history window to fit; `mount` selects a volume (default: the largest). Returns days_until_full (null when the trend is flat, free space is growing, or there's under a week of history — never a bare date), the bytes/day trend, and the basis it used. Robust to single-sample cliffs. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "days": ["type": "integer", "minimum": 7, "maximum": 365],
+                        "mount": ["type": "string", "description": "Volume mount point, e.g. \"/\". Defaults to the largest volume."],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_diff",
+                "description": "What changed between the snapshot nearest `since` (unix seconds; or use `minutes` back from now, default 1440) and the latest: which processes entered/left the top list, and the free-space delta on the largest volume. v1 scope — app, login-item, and port inventories aren't tracked across time yet, so they're not diffed. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "since": ["type": "integer", "description": "Unix-seconds lower bound. Overrides `minutes`."],
+                        "minutes": ["type": "integer", "minimum": 1],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_report",
+                "description": "A weekly system digest as Markdown over the last `days` (default 7, 1-90): disk-full forecast, top energy users (by estimated CPU-seconds), and cleanup summary. The same artifact the Home Report card shows. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "days": ["type": "integer", "minimum": 1, "maximum": 90],
+                    ],
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_doctor",
+                "description": "Quick diagnostics: engine (mo) presence, Full Disk Access, memory pressure, disk headroom, and recent decode errors — each an ok/warn/fail check with a short detail. Read-only.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [String: Any](),
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
+                "name": "burrow_ports",
+                "description": "Listening TCP/UDP ports with the owning process (pid, name, uid). Native enumeration (no lsof). Read-only — to free a port, kill the process yourself.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [String: Any](),
+                    "additionalProperties": false,
+                ] as [String: Any],
+            ],
+            [
                 "name": "burrow_info",
                 "description": "Burrow's own state: list of prefixes with row counts + staleness, current retention setting. Use when diagnosing whether data is flowing.",
                 "inputSchema": [
@@ -386,7 +439,45 @@ struct ToolCatalog {
         ]
     }
 
+    /// Public entry: dispatch the tool, then (for mutating tools) leave an
+    /// audit row so a human can see what an agent did (B.5).
     func call(name: String, arguments: [String: Any]) throws -> String {
+        let start = Date()
+        do {
+            let result = try dispatch(name: name, arguments: arguments)
+            if Self.auditedTools.contains(name) {
+                recordAudit(tool: name, arguments: arguments, ok: true, summary: result, since: start)
+            }
+            return result
+        } catch {
+            if Self.auditedTools.contains(name) {
+                recordAudit(tool: name, arguments: arguments, ok: false, summary: "\(error)", since: start)
+            }
+            throw error
+        }
+    }
+
+    /// The mutating tools whose use we record. Read-only tools aren't audited
+    /// — no action taken, and it would bloat the log (and the reader list).
+    static let auditedTools: Set<String> = [
+        "burrow_clean", "burrow_optimize", "burrow_uninstall", "burrow_purge", "burrow_installer",
+    ]
+
+    private func recordAudit(tool: String, arguments: [String: Any], ok: Bool, summary: String, since: Date) {
+        let argsJSON = (try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let entry = AgentAudit.Entry(
+            tool: tool, client: "mcp",
+            dryRun: (arguments["confirm"] as? Bool) != true,
+            durationMs: Int(Date().timeIntervalSince(since) * 1000),
+            ok: ok, summary: String(summary.prefix(200)), argsJSON: argsJSON)
+        // db.insert is serialized (writeQueue) with a busy timeout, so this is
+        // safe alongside the GUI sampler's writes.
+        try? db.insert(prefix: AgentAudit.prefix, ts: Int(Date().timeIntervalSince1970),
+                       json: AgentAudit.encode(entry))
+    }
+
+    private func dispatch(name: String, arguments: [String: Any]) throws -> String {
         switch name {
         case "burrow_snapshot":
             return self.callSnapshot()
@@ -396,6 +487,16 @@ struct ToolCatalog {
             return try self.callTopProcesses(arguments)
         case "burrow_process_usage":
             return try self.callProcessUsage(arguments)
+        case "burrow_disk_forecast":
+            return try self.callDiskForecast(arguments)
+        case "burrow_diff":
+            return self.callDiff(arguments)
+        case "burrow_report":
+            return self.callReport(arguments)
+        case "burrow_doctor":
+            return self.callDoctor(arguments)
+        case "burrow_ports":
+            return self.callPorts(arguments)
         case "burrow_info":
             return self.callInfo()
         case "burrow_cleanup_history":
@@ -512,6 +613,126 @@ struct ToolCatalog {
             pieces.append("{\"name\":\"\(escaped)\",\"peak_cpu\":\(p.peakCPU),\"avg_cpu\":\(p.avgCPU),\"est_cpu_time_seconds\":\(p.estCPUSeconds),\"peak_mem\":\(p.peakMem),\"samples\":\(p.samples)}")
         }
         return "{\"metric\":\"\(metric)\",\"window_minutes\":\(minutes),\"start_ts\":\(pw.startTS),\"end_ts\":\(pw.endTS),\"sample_count\":\(pw.sampleCount),\"interval_seconds\":\(Int(pw.intervalSeconds.rounded())),\"processes\":[\(pieces.joined(separator: ","))]}"
+    }
+
+    /// `burrow_disk_forecast` — when does this volume fill? Reads the
+    /// free-space history and runs the (honest, cliff-resistant) forecaster.
+    private func callDiskForecast(_ args: [String: Any]) throws -> String {
+        let days = max(7, min((args["days"] as? Int) ?? 30, 365))
+        let mount = args["mount"] as? String
+        let now = Int(Date().timeIntervalSince1970)
+        let w = MetricsStore.Window(since: now - days * 86_400, until: now)
+        let series = self.metrics.diskFreeSeries(mount: mount, w)
+        let p = DiskForecast.forecast(series, now: now)
+        let mountStr = (mount ?? "primary")
+            .replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let daysStr = p.daysUntilFull.map { String(format: "%.1f", $0) } ?? "null"
+        return "{\"mount\":\"\(mountStr)\",\"basis_days\":\(String(format: "%.1f", p.basisDays)),"
+            + "\"slope_bytes_per_day\":\(Int64(p.slopeBytesPerDay.rounded())),"
+            + "\"days_until_full\":\(daysStr),\"samples\":\(series.count)}"
+    }
+
+    /// `burrow_diff` — what changed since a point in time. v1 diffs top-process
+    /// membership and free-space delta from the snapshots already on disk;
+    /// app/login-item/port inventories aren't yet persisted over time.
+    private func callDiff(_ args: [String: Any]) -> String {
+        let now = Int(Date().timeIntervalSince1970)
+        let since: Int
+        if let s = args["since"] as? Int {
+            since = s
+        } else {
+            let m = max(1, min((args["minutes"] as? Int) ?? 1440, 1_000_000))
+            since = now - m * 60
+        }
+        let snaps = self.metrics.snapshots(MetricsStore.Window(since: since, until: now)).snapshots
+        guard let first = snaps.first, let last = snaps.last, snaps.count >= 2 else {
+            return "{\"error\":\"need at least two snapshots in the window\",\"since_ts\":\(since),\"until_ts\":\(now)}"
+        }
+        let change = InventoryDiff.diff(old: (first.status.topProcesses ?? []).map(\.name),
+                                        new: (last.status.topProcesses ?? []).map(\.name))
+        func freeOf(_ s: MoleStatus) -> Int64 {
+            guard let d = s.disks.max(by: { $0.total < $1.total }) else { return 0 }
+            return Int64(d.total > d.used ? d.total - d.used : 0)
+        }
+        func arr(_ xs: [String]) -> String {
+            "[" + xs.map { "\"\($0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"" }
+                .joined(separator: ",") + "]"
+        }
+        func ids(_ json: String) -> [String] {
+            (try? JSONDecoder().decode([String].self, from: Data(json.utf8))) ?? []
+        }
+        let invRows = self.metrics.rawRows(prefix: Maintenance.startupInvPrefix,
+                                           MetricsStore.Window(since: since, until: now), maxPoints: nil)
+        let login = invRows.count >= 2
+            ? InventoryDiff.diff(old: ids(invRows.first!.json), new: ids(invRows.last!.json))
+            : InventoryDiff.Change(added: [], removed: [])
+        return "{\"since_ts\":\(first.ts),\"until_ts\":\(last.ts),"
+            + "\"processes_entered\":\(arr(change.added)),\"processes_left\":\(arr(change.removed)),"
+            + "\"login_items_added\":\(arr(login.added)),\"login_items_removed\":\(arr(login.removed)),"
+            + "\"disk_free_delta_bytes\":\(freeOf(last.status) - freeOf(first.status)),"
+            + "\"note\":\"app and port inventories are not yet tracked across time\"}"
+    }
+
+    /// `burrow_report` — the weekly digest as Markdown (the tool's text
+    /// payload IS the markdown). v1 composes the disk forecast + top energy
+    /// from snapshots; cleanup/battery/login-item sections fill in as their
+    /// data sources land (so they're omitted/"unavailable" rather than faked).
+    private func callReport(_ args: [String: Any]) -> String {
+        let days = max(1, min((args["days"] as? Int) ?? 7, 90))
+        return WeeklyReport.markdown(
+            ReportComposer.gather(metrics: self.metrics, days: days,
+                                  now: Int(Date().timeIntervalSince1970)))
+    }
+
+    /// `burrow_doctor` — diagnostics from signals already on hand: engine
+    /// presence, Full Disk Access, and (from the latest snapshot) memory
+    /// pressure + disk headroom, plus the decode-drift count.
+    private func callDoctor(_ args: [String: Any]) -> String {
+        let moInstalled: Bool
+        if case .installed = MoEngine.shared.availability() { moInstalled = true } else { moInstalled = false }
+        let latest = self.metrics.latest()?.status
+        var free: Int64 = 0, total: Int64 = 0
+        if let d = latest?.disks.max(by: { $0.total < $1.total }) {
+            total = Int64(d.total)
+            free = Int64(d.total > d.used ? d.total - d.used : 0)
+        }
+        let input = Doctor.Input(
+            fullDiskAccess: Privacy.hasFullDiskAccess(),
+            moInstalled: moInstalled,
+            pressure: Self.mapPressure(latest?.memory.pressure),
+            diskFreeBytes: free, diskTotalBytes: total,
+            recentErrorCount: MetricsStore.driftCounters.decodeSkippedTotal,
+            lastBackupDaysAgo: BackupStatus.lastBackupDaysAgo(),
+            smartVerified: DiskHealth.smartVerified())
+        func esc(_ s: String) -> String {
+            "\"\(s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+        }
+        let levels = ["ok", "warn", "fail"]
+        let items = Doctor.report(input).map { c in
+            "{\"name\":\(esc(c.name)),\"level\":\"\(levels[c.level.rawValue])\",\"detail\":\(esc(c.detail))}"
+        }
+        return "{\"checks\":[\(items.joined(separator: ","))]}"
+    }
+
+    /// Map mo's free-text memory-pressure string to the Doctor enum.
+    private static func mapPressure(_ s: String?) -> Doctor.MemoryPressure {
+        guard let s = s?.lowercased() else { return .normal }
+        if s.contains("critical") { return .critical }
+        if s.contains("warn") { return .warning }
+        return .normal
+    }
+
+    /// `burrow_ports` — listening sockets + owning process, via native
+    /// enumeration. Read-only; killing is a GUI-only, confirm-gated action.
+    private func callPorts(_ args: [String: Any]) -> String {
+        func esc(_ s: String) -> String {
+            "\"\(s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+        }
+        let ports = PortEnumerator.listening()
+        let items = ports.map { p in
+            "{\"pid\":\(p.pid),\"process\":\(esc(p.process)),\"port\":\(p.port),\"proto\":\"\(p.proto)\",\"uid\":\(p.uid)}"
+        }
+        return "{\"count\":\(ports.count),\"ports\":[\(items.joined(separator: ","))]}"
     }
 
     private func callInfo() -> String {

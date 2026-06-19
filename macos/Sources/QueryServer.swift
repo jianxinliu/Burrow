@@ -100,7 +100,9 @@ final class QueryServer {
         // inside this window; cancelling an already-closed connection is a
         // no-op.
         self.queue.asyncAfter(deadline: .now() + 10) { [weak conn] in
-            conn?.cancel()
+            guard let conn else { return }
+            // SSE /events connections are long-lived; don't idle-cancel them.
+            if !EventHub.shared.isStreaming(conn) { conn.cancel() }
         }
         self.receive(conn, accumulated: Data())
     }
@@ -136,7 +138,9 @@ final class QueryServer {
             if let data { buf.append(data) }
             switch Self.nextAction(buffer: buf, isComplete: isComplete) {
             case .respond(let header):
-                self.send(self.route(header), on: conn)
+                if !self.tryServeEvents(header, on: conn) {
+                    self.send(self.route(header), on: conn)
+                }
             case .drop:
                 conn.cancel()
             case .keepReading:
@@ -150,31 +154,78 @@ final class QueryServer {
     /// client, and an allow-all grant would let any web page read /snapshot
     /// (hostname, process command lines) cross-origin. The real clients —
     /// curl and the stdio MCP bridge — don't need CORS at all.
-    static func httpHead(contentLength: Int) -> String {
+    static let jsonContentType = "application/json; charset=utf-8"
+    /// Prometheus text exposition format, version 0.0.4 — the de-facto scrape
+    /// content type. Served only by `/metrics?format=prometheus`.
+    static let prometheusContentType = "text/plain; version=0.0.4; charset=utf-8"
+
+    static func httpHead(contentLength: Int, contentType: String = jsonContentType) -> String {
         return "HTTP/1.1 200 OK\r\n"
-            + "Content-Type: application/json; charset=utf-8\r\n"
+            + "Content-Type: \(contentType)\r\n"
             + "Content-Length: \(contentLength)\r\n"
             + "Cache-Control: no-store\r\n"
             + "Connection: close\r\n"
             + "\r\n"
     }
 
-    private func send(_ json: String, on conn: NWConnection) {
-        let body = Data(json.utf8)
-        var payload = Data(Self.httpHead(contentLength: body.count).utf8)
+    private func send(_ response: (body: String, contentType: String), on conn: NWConnection) {
+        let body = Data(response.body.utf8)
+        var payload = Data(Self.httpHead(contentLength: body.count, contentType: response.contentType).utf8)
         payload.append(body)
         conn.send(content: payload, completion: .contentProcessed { _ in conn.cancel() })
     }
 
+    // MARK: - SSE /events (B.6)
+
+    /// Parse the `token` query param from a request target. Static + pure so
+    /// the auth gate is unit-tested without a socket.
+    static func eventsToken(from target: String) -> String {
+        let parts = target.split(separator: "?", maxSplits: 1)
+        guard parts.count > 1 else { return "" }
+        for kv in parts[1].split(separator: "&") {
+            let p = kv.split(separator: "=", maxSplits: 1)
+            if p.count == 2, p[0] == "token" { return String(p[1]) }
+        }
+        return ""
+    }
+
+    /// Handle `GET /events`: a token-gated SSE stream. Returns true if it took
+    /// ownership of the connection (streaming, or 401'd it), false to fall
+    /// through to the normal one-shot router. The server binds loopback only,
+    /// so the token just keeps other local processes/pages from subscribing.
+    private func tryServeEvents(_ header: String, on conn: NWConnection) -> Bool {
+        let line = header.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? ""
+        let parts = line.split(separator: " ")
+        guard parts.count >= 2, parts[0] == "GET" else { return false }
+        let target = String(parts[1])
+        guard target.split(separator: "?", maxSplits: 1).first.map(String.init) == "/events" else { return false }
+
+        guard !Store.queryAuthToken.isEmpty, Self.eventsToken(from: target) == Store.queryAuthToken else {
+            let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            conn.send(content: Data(resp.utf8), completion: .contentProcessed { _ in conn.cancel() })
+            return true
+        }
+        let head = "HTTP/1.1 200 OK\r\n"
+            + "Content-Type: text/event-stream; charset=utf-8\r\n"
+            + "Cache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
+        conn.send(content: Data((head + SSEFrame.comment("connected")).utf8), completion: .contentProcessed { _ in })
+        EventHub.shared.register(conn)
+        return true
+    }
+
     // MARK: - Routing
 
-    func route(_ raw: String) -> String {
+    /// Returns the response body and its content type. Everything is JSON
+    /// except `/metrics?format=prometheus`, which is text exposition.
+    func route(_ raw: String) -> (body: String, contentType: String) {
+        func json(_ s: String) -> (body: String, contentType: String) { (s, Self.jsonContentType) }
+
         guard let first = raw.split(separator: "\r\n", maxSplits: 1).first else {
-            return Self.errorJSON("malformed request")
+            return json(Self.errorJSON("malformed request"))
         }
         let parts = first.split(separator: " ")
         guard parts.count >= 2, parts[0] == "GET" else {
-            return Self.errorJSON("only GET supported")
+            return json(Self.errorJSON("only GET supported"))
         }
         let target = String(parts[1])
         let split = target.split(separator: "?", maxSplits: 1)
@@ -183,19 +234,22 @@ final class QueryServer {
 
         switch path {
         case "/health":
-            return "{\"ok\":true,\"app\":\"Burrow\",\"port\":\(self.port)}"
+            return json("{\"ok\":true,\"app\":\"Burrow\",\"port\":\(self.port)}")
 
         case "/info":
-            return self.routeInfo()
+            return json(self.routeInfo())
 
         case "/snapshot":
-            return self.routeSnapshot()
+            return json(self.routeSnapshot())
 
         case "/metrics":
-            return self.routeMetrics(query: query)
+            if query["format"] == "prometheus" {
+                return (self.routeMetricsPrometheus(), Self.prometheusContentType)
+            }
+            return json(self.routeMetrics(query: query))
 
         default:
-            return Self.errorJSON("unknown route")
+            return json(Self.errorJSON("unknown route"))
         }
     }
 
@@ -237,6 +291,19 @@ final class QueryServer {
         // Inline the stored JSON verbatim under a known key. Callers that
         // want typed access can decode the value against the Mole schema.
         return "{\"ts\":\(row.ts),\"snapshot\":\(row.json)}"
+    }
+
+    /// `GET /metrics?format=prometheus` → the latest snapshot rendered as
+    /// Prometheus text exposition (roadmap B7), so a dev can point Grafana at
+    /// their own Mac. A missing or undecodable snapshot yields a comment line
+    /// rather than an error JSON — scrapers tolerate an empty target.
+    private func routeMetricsPrometheus() -> String {
+        guard let row = self.metrics.latestRaw(),
+              let status = try? JSONDecoder().decode(MoleStatus.self, from: Data(row.json.utf8))
+        else {
+            return "# burrow: no snapshot available\n"
+        }
+        return MetricsPrometheus.exposition(from: status)
     }
 
     private func routeMetrics(query: [String: String]) -> String {

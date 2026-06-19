@@ -410,6 +410,7 @@ struct MoItemRow: View {
     let selected: Bool
     let onToggle: () -> Void
     @State private var hover = false
+    @State private var gitWarn = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -420,6 +421,11 @@ struct MoItemRow: View {
                     .font(Brand.mono(10)).foregroundStyle(Brand.textTertiary).lineLimit(1)
             }
             Spacer(minLength: 8)
+            if gitWarn {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(.yellow)
+                    .help(NSLocalizedString("Uncommitted or unpushed git changes in this repo", comment: ""))
+            }
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 17)).foregroundStyle(selected ? accent : Brand.textTertiary)
         }
@@ -428,5 +434,38 @@ struct MoItemRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture { onToggle() }
+        .task { await checkGit() }
+    }
+
+    /// Purge-safety badge (C.11): flag rows whose folder sits in a repo with
+    /// uncommitted/unpushed work. Read-only — never changes what's selected.
+    ///
+    /// Mole's TUI prints a home-relative *location label* (e.g. "Desktop" or
+    /// "Developer/myapp"), not an absolute path — so we resolve candidate paths
+    /// under $HOME (the artifact itself and its labelled folder), walk up to the
+    /// enclosing repo, and check it. Absolute / `~` locations (other Mole
+    /// versions) are honored as-is. Unresolvable labels simply show no badge —
+    /// never a false positive.
+    private func checkGit() async {
+        let loc = item.location.trimmingCharacters(in: .whitespaces)
+        guard !loc.isEmpty else { return }
+        let name = item.name
+        let candidates: [String]
+        if loc.hasPrefix("/") || loc.hasPrefix("~") {
+            let base = (loc as NSString).expandingTildeInPath
+            candidates = ["\(base)/\(name)", base]
+        } else {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            candidates = ["\(home)/\(loc)/\(name)", "\(home)/\(loc)"]
+        }
+        gitWarn = await Task.detached(priority: .utility) { () -> Bool in
+            for path in candidates where FileManager.default.fileExists(atPath: path) {
+                if let repo = GitSweep.repoRoot(for: path),
+                   GitSweep.status(repo: repo)?.needsAttention == true {
+                    return true
+                }
+            }
+            return false
+        }.value
     }
 }

@@ -82,24 +82,25 @@ final class QueryServerTests: XCTestCase {
 
     func testRoute_health() {
         let res = server.route("GET /health HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("\"ok\":true"))
-        XCTAssertTrue(res.contains("9277"))
+        XCTAssertTrue(res.body.contains("\"ok\":true"))
+        XCTAssertTrue(res.body.contains("9277"))
+        XCTAssertEqual(res.contentType, QueryServer.jsonContentType)
     }
 
     func testRoute_rejectsNonGET() {
         let res = server.route("POST /health HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("error"))
-        XCTAssertTrue(res.contains("only GET"))
+        XCTAssertTrue(res.body.contains("error"))
+        XCTAssertTrue(res.body.contains("only GET"))
     }
 
     func testRoute_unknownPathIsError() {
         let res = server.route("GET /admin HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("unknown route"))
+        XCTAssertTrue(res.body.contains("unknown route"))
     }
 
     func testRoute_malformedRequestIsError() {
-        XCTAssertTrue(server.route("").contains("error"))
-        XCTAssertTrue(server.route("\r\n\r\n").contains("error"))
+        XCTAssertTrue(server.route("").body.contains("error"))
+        XCTAssertTrue(server.route("\r\n\r\n").body.contains("error"))
     }
 
     func testRoute_snapshotReturnsLatestSeededRow() throws {
@@ -107,19 +108,19 @@ final class QueryServerTests: XCTestCase {
         try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now - 60, json: "{\"old\":true}")
         try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now, json: "{\"new\":true}")
         let res = server.route("GET /snapshot HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("\"new\":true"), "should embed the most recent row verbatim")
-        XCTAssertFalse(res.contains("\"old\":true"))
-        XCTAssertTrue(res.contains("\"ts\":\(now)"))
+        XCTAssertTrue(res.body.contains("\"new\":true"), "should embed the most recent row verbatim")
+        XCTAssertFalse(res.body.contains("\"old\":true"))
+        XCTAssertTrue(res.body.contains("\"ts\":\(now)"))
     }
 
     func testRoute_snapshotWithEmptyDBIsError() {
         let res = server.route("GET /snapshot HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("no snapshot yet"))
+        XCTAssertTrue(res.body.contains("no snapshot yet"))
     }
 
     func testRoute_metricsRequiresPrefix() {
         let res = server.route("GET /metrics HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("missing 'prefix'"))
+        XCTAssertTrue(res.body.contains("missing 'prefix'"))
     }
 
     func testRoute_metricsReturnsSeededRange() throws {
@@ -128,9 +129,35 @@ final class QueryServerTests: XCTestCase {
         try db.insert(prefix: "cpu", ts: now - 5, json: "{\"v\":2}")
         try db.insert(prefix: "other", ts: now - 5, json: "{\"v\":9}")
         let res = server.route("GET /metrics?prefix=cpu&since=0&until=\(now + 1) HTTP/1.1\r\n\r\n")
-        XCTAssertTrue(res.contains("{\"v\":1}"))
-        XCTAssertTrue(res.contains("{\"v\":2}"))
-        XCTAssertFalse(res.contains("{\"v\":9}"), "other prefixes must not bleed into the slice")
+        XCTAssertTrue(res.body.contains("{\"v\":1}"))
+        XCTAssertTrue(res.body.contains("{\"v\":2}"))
+        XCTAssertFalse(res.body.contains("{\"v\":9}"), "other prefixes must not bleed into the slice")
+    }
+
+    // Roadmap B7: `/metrics?format=prometheus` renders the latest snapshot as
+    // Prometheus text exposition, served with the text/plain scrape
+    // content-type (not JSON) so a real scraper accepts it.
+    func testRoute_metricsPrometheusRendersLatestSnapshot() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let snap = """
+        {"collected_at":"2026-06-08T03:16:25.068057-07:00","host":"h","platform":"darwin","uptime_seconds":100,"procs":1,
+         "hardware":{"model":"Mac","cpu_model":"M","total_ram":"24 GB","disk_size":"460 GB","os_version":"26"},
+         "health_score":90,"health_score_msg":"Good",
+         "cpu":{"usage":42,"load1":1.5,"load5":1,"load15":1,"core_count":10,"logical_cpu":10},
+         "memory":{"used":100,"total":200,"used_percent":50,"swap_used":0,"swap_total":0,"pressure":""},
+         "disk_io":{"read_rate":0,"write_rate":0},"top_processes":[]}
+        """
+        try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now, json: snap)
+        let res = server.route("GET /metrics?format=prometheus HTTP/1.1\r\n\r\n")
+        XCTAssertEqual(res.contentType, QueryServer.prometheusContentType)
+        XCTAssertTrue(res.body.contains("\nburrow_cpu_usage_percent 42\n"), res.body)
+        XCTAssertTrue(res.body.contains("# TYPE burrow_health_score gauge"), res.body)
+    }
+
+    func testRoute_metricsPrometheusWithEmptyDBYieldsComment() {
+        let res = server.route("GET /metrics?format=prometheus HTTP/1.1\r\n\r\n")
+        XCTAssertEqual(res.contentType, QueryServer.prometheusContentType)
+        XCTAssertTrue(res.body.hasPrefix("#"), "scrapers tolerate an empty target; emit a comment, not error JSON")
     }
 
     // Drift counters ride along on /info so a blank chart always has a
@@ -138,7 +165,7 @@ final class QueryServerTests: XCTestCase {
     func testRoute_infoSurfacesDriftCounters() throws {
         MetricsStore.resetDriftCounters()
         let clean = server.route("GET /info HTTP/1.1\r\n\r\n")
-        let cleanObj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(clean.utf8)) as? [String: Any])
+        let cleanObj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(clean.body.utf8)) as? [String: Any])
         XCTAssertEqual(cleanObj["decode_skipped_total"] as? Int, 0)
         XCTAssertTrue(cleanObj["last_drift"] is NSNull, "no drift yet → explicit null")
 
@@ -147,7 +174,7 @@ final class QueryServerTests: XCTestCase {
         _ = MetricsStore(db: db).snapshots(.init(since: 0, until: now + 1))
 
         let drifted = server.route("GET /info HTTP/1.1\r\n\r\n")
-        let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(drifted.utf8)) as? [String: Any])
+        let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(drifted.body.utf8)) as? [String: Any])
         XCTAssertEqual(obj["decode_skipped_total"] as? Int, 1)
         let last = try XCTUnwrap(obj["last_drift"] as? [String: Any])
         XCTAssertEqual(last["ts"] as? Int, now)

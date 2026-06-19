@@ -1,0 +1,79 @@
+//
+//  ReportComposerTests.swift
+//  BurrowTests
+//
+//  The history→report-input gather (roadmap A.4), shared by the Home card and
+//  burrow_report. Seeds snapshots and asserts the composed Input.
+//
+
+import XCTest
+@testable import Burrow
+
+final class ReportComposerTests: XCTestCase {
+    private var tempDir: URL!
+    private var db: DB!
+
+    override func setUpWithError() throws {
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("burrow-rc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        db = try DB(at: tempDir.appendingPathComponent("burrow.db"))
+    }
+
+    override func tearDown() {
+        db = nil
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    private func snapshot(freeGB: Int64, proc: String, cpu: Double = 80) -> String {
+        let total: Int64 = 500_000_000_000
+        let used = total - freeGB * 1_000_000_000
+        return """
+        {"collected_at":"2026-06-08T03:16:25.068057-07:00","host":"h","platform":"darwin","uptime_seconds":100,"procs":1,
+         "hardware":{"model":"Mac","cpu_model":"M","total_ram":"24 GB","disk_size":"460 GB","os_version":"26"},
+         "health_score":90,"health_score_msg":"Good",
+         "cpu":{"usage":10,"load1":1,"load5":1,"load15":1,"core_count":10,"logical_cpu":10},
+         "memory":{"used":100,"total":200,"used_percent":50,"swap_used":0,"swap_total":0,"pressure":""},
+         "disk_io":{"read_rate":0,"write_rate":0},
+         "disks":[{"mount":"/","used":\(used),"total":\(total),"used_percent":50,"external":false}],
+         "top_processes":[{"pid":1,"name":"\(proc)","command":"/bin/\(proc)","cpu":\(cpu),"memory":5}]}
+        """
+    }
+
+    func testGather_fillsForecastAndTopEnergy() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let day = 86_400
+        for d in 0...30 {
+            let free = Int64(130_000_000_000) - Int64(d) * 1_000_000_000
+            try db.insert(prefix: MetricsStore.snapshotPrefix,
+                          ts: now - (30 - d) * day, json: snapshot(freeGB: free / 1_000_000_000, proc: "xcode"))
+        }
+        let input = ReportComposer.gather(metrics: MetricsStore(db: db), days: 60, now: now)
+        XCTAssertEqual(input.periodDays, 60)
+        XCTAssertNil(input.spaceReclaimedBytes, "cleanup history isn't a v1 source")
+        XCTAssertNotNil(input.forecast?.daysUntilFull, "steady decline yields a forecast")
+        XCTAssertEqual(input.topEnergy.first?.name, "xcode")
+    }
+
+    func testGather_includesAnomalies() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let day = 86_400
+        // Rows must be spaced wider than the query's down-sample stride
+        // (~28 min over a 14-day baseline, ~2 min over 24h) or they collapse
+        // into one bucket. Baseline (prior 14d): "hog" idles low, 2h apart.
+        for k in 0..<8 {
+            try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now - 5 * day + k * 7200,
+                          json: snapshot(freeGB: 100, proc: "hog", cpu: 5))
+        }
+        // Recent (last 24h): "hog" is pegged, 10 min apart.
+        for k in 0..<8 {
+            try db.insert(prefix: MetricsStore.snapshotPrefix, ts: now - 600 - k * 600,
+                          json: snapshot(freeGB: 100, proc: "hog", cpu: 60))
+        }
+        let found = AnomalyScan.scan(metrics: MetricsStore(db: db), now: now)
+        XCTAssertTrue(found.contains { $0.process == "hog" },
+                      "scan returned: \(found.map { "\($0.process) \($0.recentMedian)/\($0.baselineMedian)" })")
+        XCTAssertTrue(ReportComposer.gather(metrics: MetricsStore(db: db), days: 7, now: now)
+            .anomalies.contains { $0.process == "hog" })
+    }
+}

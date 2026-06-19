@@ -216,6 +216,13 @@ struct HistoryView: View {
     @State private var snapshot: HistorySnapshot = HistorySnapshot()
     @State private var loading: Bool = false
     @State private var procMetric: ProcMetric = .cpu
+    // Spike forensics (A.1): drag-select on ANY chart → top processes. The band
+    // is keyed to the chart you're dragging (`spikeDragChart`) so it doesn't
+    // paint on every chart at once, and the window carries the chart's metric.
+    @State private var spikeDragStart: CGFloat?
+    @State private var spikeDragCurrent: CGFloat?
+    @State private var spikeDragChart: String?
+    @State private var spikeWindow: SpikeWindow?
     /// The currently-subscribed board feed — held so the toolbar's manual
     /// refresh can poke it; lifecycle belongs to `.task(id: range)` below.
     @State private var board: Feed<HistorySnapshot>?
@@ -250,6 +257,9 @@ struct HistoryView: View {
                     .padding(16)
                 }
                 .scrollIndicators(.hidden)
+                .sheet(item: $spikeWindow) { w in
+                    SpikeSheet(db: db, window: w, onClose: { spikeWindow = nil })
+                }
             }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The whole load/refresh lifecycle is one task-scoped feed
@@ -399,6 +409,12 @@ struct HistoryView: View {
                         }
                     }
                     .chartXScale(domain: -0.5 ... (Double(n) - 0.5))
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            dragSelectOverlay(title: title, metric: spikeMetric(for: title),
+                                              bars: true, labelPts: labelPts, proxy: proxy, geo: geo)
+                        }
+                    }
                     .chartXAxis {
                         AxisMarks(values: barAxisTicks(labelPts.count, desired: style.desiredCount)) { v in
                             AxisGridLine().foregroundStyle(Brand.hairline)
@@ -430,6 +446,12 @@ struct HistoryView: View {
                         }
                     }
                     .chartXScale(domain: snapshot.windowSince...snapshot.windowUntil)
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            dragSelectOverlay(title: title, metric: spikeMetric(for: title),
+                                              bars: false, labelPts: [], proxy: proxy, geo: geo)
+                        }
+                    }
                     .chartXAxis {
                         AxisMarks(values: .automatic(desiredCount: style.desiredCount)) { _ in
                             AxisGridLine().foregroundStyle(Brand.hairline)
@@ -447,6 +469,70 @@ struct HistoryView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Drag-to-select (spike forensics)
+
+    /// Which process metric a chart maps to. Mole's top_processes only carries
+    /// CPU + memory, so memory charts open the sheet on RAM and everything else
+    /// (CPU / GPU / disk / net / thermal) on CPU — both axes stay togglable.
+    private func spikeMetric(for title: String) -> ProcMetric {
+        title.lowercased().contains("memory") ? .ram : .cpu
+    }
+
+    /// Drag-to-select overlay shared by line and bar charts. The band only
+    /// paints on the chart that owns the active drag (`spikeDragChart`), so it
+    /// no longer duplicates across every chart; on end it maps the x-range to a
+    /// time window and opens the spike sheet. Bars plot by index, so their
+    /// endpoints map through `labelPts` timestamps.
+    @ViewBuilder
+    private func dragSelectOverlay(title: String, metric: ProcMetric, bars: Bool,
+                                   labelPts: [ChartPoint], proxy: ChartProxy, geo: GeometryProxy) -> some View {
+        if let anchor = proxy.plotFrame {
+            let plot = geo[anchor]
+            WindowDragBlocker()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .highPriorityGesture(DragGesture(minimumDistance: 2)
+                    .onChanged { v in
+                        spikeDragChart = title
+                        if spikeDragStart == nil { spikeDragStart = v.startLocation.x - plot.minX }
+                        spikeDragCurrent = v.location.x - plot.minX
+                    }
+                    .onEnded { v in
+                        let x0 = spikeDragStart ?? 0
+                        let x1 = v.location.x - plot.minX
+                        spikeDragStart = nil; spikeDragCurrent = nil; spikeDragChart = nil
+                        let lo = min(x0, x1), hi = max(x0, x1)
+                        guard hi - lo > 4 else { return }
+                        guard let times = bars
+                            ? barTimes(lo: lo, hi: hi, proxy: proxy, labelPts: labelPts)
+                            : lineTimes(lo: lo, hi: hi, proxy: proxy) else { return }
+                        spikeWindow = SpikeWindow(since: Int(times.0.timeIntervalSince1970),
+                                                  until: Int(times.1.timeIntervalSince1970), metric: metric)
+                    })
+            if spikeDragChart == title, let s = spikeDragStart, let c = spikeDragCurrent {
+                Rectangle().fill(Brand.textSecondary.opacity(0.18))
+                    .frame(width: abs(c - s), height: plot.height)
+                    .position(x: plot.minX + min(s, c) + abs(c - s) / 2, y: plot.midY)
+            }
+        }
+    }
+
+    private func lineTimes(lo: CGFloat, hi: CGFloat, proxy: ChartProxy) -> (Date, Date)? {
+        guard let d0 = proxy.value(atX: lo, as: Date.self),
+              let d1 = proxy.value(atX: hi, as: Date.self) else { return nil }
+        return (d0, d1)
+    }
+
+    /// Map a drag on a by-index bar chart back to the timestamps its bars stand for.
+    private func barTimes(lo: CGFloat, hi: CGFloat, proxy: ChartProxy, labelPts: [ChartPoint]) -> (Date, Date)? {
+        guard !labelPts.isEmpty,
+              let i0 = proxy.value(atX: lo, as: Double.self),
+              let i1 = proxy.value(atX: hi, as: Double.self) else { return nil }
+        let a = max(0, min(labelPts.count - 1, Int(i0.rounded())))
+        let b = max(0, min(labelPts.count - 1, Int(i1.rounded())))
+        guard a != b else { return nil }
+        return (labelPts[min(a, b)].time, labelPts[max(a, b)].time)
     }
 
     /// Processes ranked by the selected metric (CPU or RAM), peak across the

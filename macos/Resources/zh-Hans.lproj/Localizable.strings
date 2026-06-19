@@ -288,8 +288,48 @@
 "Close" = "关闭";
 "Mole CLI not found" = "未找到 Mole CLI";
 
-/* Home (Overview / History / Activity) + Explain */
+/* Home (Overview / History / Activity / Report) + Explain */
 "Overview" = "概览";
+"Report" = "报告";
+"Doctor" = "诊断";
+"Diagnostics" = "系统诊断";
+"Dev hygiene" = "开发清理";
+"No developer caches found." = "未发现开发者缓存。";
+"Clear" = "清理";
+"Move this cache to the Trash?" = "将此缓存移到废纸篓？";
+"ports" = "端口";
+"Ports" = "端口";
+"Listening ports" = "监听端口";
+"See who's listening." = "看看谁在监听。";
+"Quit this process?" = "退出此进程？";
+"tuneup" = "调优";
+"Tune-Up" = "调优";
+"One pass, a tidier den." = "一次整理，洞穴更整洁。";
+"Safe to run" = "可安全执行";
+"Needs review" = "需要审查";
+"Run safe set" = "执行安全项";
+"Clear %@ cache" = "清理 %@ 缓存";
+"Review startup item: %@" = "审查启动项：%@";
+"Nothing to tune up — you're clean." = "没有需要调优的内容——很干净。";
+"restore" = "恢复";
+"Restore" = "恢复";
+"Put back what the last clean moved." = "把上次清理移走的放回原处。";
+"Restore last cleanup" = "恢复上次清理";
+"Only Trash-based removals can be restored — cache deletions are permanent." = "仅可恢复移到废纸篓的项目——缓存删除是永久性的。";
+"No restorable items found." = "未找到可恢复的项目。";
+"Top processes in selection" = "所选区间内的主要进程";
+"No process samples in that window." = "该区间内没有进程采样。";
+"Full in ~%@" = "约 %@ 后写满";
+"%d days" = "%d 天";
+"%d weeks" = "%d 周";
+"%d months" = "%d 个月";
+"Uncommitted or unpushed git changes in this repo" = "此仓库有未提交或未推送的 git 更改";
+"A new startup item appeared" = "出现了新的启动项";
+"“%@” now launches automatically. If you didn't add it, review it." = "“%@” 现在会自动启动。如果不是你添加的，请检查它。";
+"CPU usage is high" = "CPU 使用率过高";
+"CPU has been pegged at %.0f%%." = "CPU 已持续满载于 %.0f%%。";
+"Memory pressure is high" = "内存压力过高";
+"Memory is at %.0f%%." = "内存使用率为 %.0f%%。";
 "Explain" = "解读";
 
 /* Language switch */
