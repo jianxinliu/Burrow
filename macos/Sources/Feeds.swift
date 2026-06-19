@@ -58,29 +58,6 @@ final class TimerFeedClock: FeedClock {
     }
 }
 
-/// Test clock: ticks fire only when `advance()` is called.
-@MainActor
-final class ManualFeedClock: FeedClock {
-    private var tickers: [ManualTicker] = []
-    init() {}
-    func makeTicker() -> FeedTicker {
-        let t = ManualTicker()
-        tickers.append(t)
-        return t
-    }
-    /// Fire every running ticker once.
-    func advance() {
-        for t in tickers { t.fire() }
-    }
-
-    private final class ManualTicker: FeedTicker {
-        private var handler: (() -> Void)?
-        func start(every interval: TimeInterval, _ tick: @escaping () -> Void) { handler = tick }
-        func stop() { handler = nil }
-        func fire() { handler?() }
-    }
-}
-
 // MARK: - Feed
 
 /// A shared, self-refreshing published value. Obtain via `FeedHub.feed` —

@@ -155,26 +155,6 @@ enum MoleCLI {
     /// GUI app with no controlling terminal (#35).
     static let minimumAnalyzeJSONVersion = "1.29.0"
 
-    /// Modal alert shown at launch when `mo` isn't installed. We block on
-    /// it because there's nothing useful Burrow can do without Mole, and a
-    /// background app silently failing is the worst possible UX for this
-    /// dependency model.
-    static func showMissingAlert() {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Mole CLI not found", comment: "")
-        alert.informativeText = NSLocalizedString("""
-            Burrow uses the Mole CLI (`mo`) for system metrics and cleanup. \
-            Install it with:
-
-                brew install mole
-
-            Then relaunch Burrow.
-            """, comment: "")
-        alert.alertStyle = .critical
-        alert.addButton(withTitle: NSLocalizedString("Quit", comment: ""))
-        _ = alert.runModalQuiet()
-    }
-
     /// Result of a subprocess invocation. `exitCode == 0` is the success
     /// convention; callers that care about diagnostics should look at
     /// `stderr` when it's non-zero, and `timedOut` distinguishes "the

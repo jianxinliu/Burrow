@@ -198,8 +198,6 @@ enum ExplainPrompt {
         }
     }
 
-    static func isChinese() -> Bool { chineseVariant() != nil }
-
     static func make(_ ctx: ExplainContext) -> (system: String, user: String) {
         let language: String
         switch chineseVariant() {

@@ -50,12 +50,6 @@ enum Privacy {
         return false
     }
 
-    /// Live check combining the access probe with the persisted dismissal.
-    static func shouldOfferFullDiskAccessNow() -> Bool {
-        shouldOfferFullDiskAccess(hasAccess: hasFullDiskAccess(),
-                                  dismissed: Store.fullDiskAccessNoticeDismissed)
-    }
-
     /// Deep-link to System Settings ▸ Privacy & Security ▸ Full Disk Access.
     static let fullDiskAccessSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
