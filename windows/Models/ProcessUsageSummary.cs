@@ -14,8 +14,6 @@ public sealed record ProcessUsageSummary(
 {
     public string PeakWorkingSetText => SystemTelemetryFormatter.Bytes(PeakWorkingSetBytes);
 
-    public string AverageWorkingSetText => SystemTelemetryFormatter.Bytes((long)AverageWorkingSetBytes);
-
     public string PeakCpuUsageText => SystemTelemetryFormatter.Percent(PeakCpuUsagePercent);
 
     public string AverageCpuUsageText => SystemTelemetryFormatter.Percent(AverageCpuUsagePercent);

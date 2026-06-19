@@ -24,7 +24,5 @@ public sealed class DiskUsageNode
 
     public string SizeText => SystemTelemetryFormatter.Bytes(SizeBytes);
 
-    public string PercentText => SystemTelemetryFormatter.Percent(PercentOfParent);
-
     public ObservableCollection<DiskUsageNode> Children { get; }
 }

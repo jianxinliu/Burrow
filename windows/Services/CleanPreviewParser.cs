@@ -4,19 +4,6 @@ namespace BurrowWin.Services;
 
 public static class CleanPreviewParser
 {
-    public static string PreviewFilePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "mole", "clean-list.txt");
-
-    public static IReadOnlyList<CleanupPreviewItem> LoadLive()
-    {
-        if (!File.Exists(PreviewFilePath))
-        {
-            return Array.Empty<CleanupPreviewItem>();
-        }
-
-        return Parse(File.ReadAllText(PreviewFilePath));
-    }
-
     public static IReadOnlyList<CleanupPreviewItem> Parse(string text)
     {
         var items = new List<CleanupPreviewItem>();
