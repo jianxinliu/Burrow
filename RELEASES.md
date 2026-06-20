@@ -1,43 +1,48 @@
-# Burrow 0.7.2
+# Burrow 0.8.0
 
-A feature release on top of the 0.7.0 redesign: cleanup, software management, and
-the live dashboard all get more capable, with a couple of opt-in surfaces and a
-quieter crash reporter. Everything stays local-first — no new always-on network.
+A top-to-bottom visual redesign, a wave of new tools, a deeper agent surface,
+and an early Windows preview. Still local-first — no new always-on network.
 
-## Cleanup
-- **Purge and Installers fold into Clean.** One Clean tab now offers three
-  category cards — system & app caches, project build artifacts, and leftover
-  installers — instead of three separate tabs. Same engines, fewer pills.
-- **Real result screens everywhere.** Every run now leads with the structured
-  summary and tucks the raw terminal output behind a collapsed "View Log."
-  Purge and Installers get a proper done screen instead of a wall of text.
+## Redesigned
+- A warm, tactile new look — a warm-coffee adaptive palette, film grain over a
+  soft gradient, a **floating icon rail** (replacing the top tabs), borderless
+  cards, and the Geist / Cal Sans type system.
+- **Overview** — Health pulled into an open hero band over a cleaner 3-up
+  vitals grid.
+- **History** — a focal hero chart with a selectable metric strip (tap to swap),
+  plus drag-select on a chart to surface the top processes for that spike.
+- **Menu-bar HUD** — borderless tiles on the same warm ground. Doctor and
+  Restore reskinned to match; edge-fade scrollers throughout.
 
-## Software
-- **Homebrew updates show up on their own.** Open Apps → Updates and your
-  outdated `brew` packages are already listed — no "Check for updates" click.
-  (Live App Store / Sparkle version checks still wait for the button, so the
-  app keeps its "no silent network" promise.)
-- **Startup items you can actually toggle.** Your own login agents now have an
-  on/off switch right in the list; system- and app-managed items stay
-  review-only, as macOS requires.
+## New & improved tools
+- **Ports** — live connections, bandwidth, reverse-DNS peers, service labels,
+  conflicts, sortable columns, and a detail view.
+- **Get Online / Connectivity** — MDM + gateway checks, active-interface IP,
+  captive-portal and device-side rescue, one-click fixes.
+- **Tune-Up** — a Smart-Care flow (scan → results → run) that auto-scans on entry.
+- **Homebrew** — Services (start / stop / restart), Brewfile snapshots
+  (export / restore), and live `brew upgrade` progress in Updates.
+- **Menu bar** — customizable popup, Stats-depth widgets, a RunCat-style runner,
+  and live metric widgets in the status item.
+- **Disk** gains a "Full in ~N" forecast; **Doctor** gains SMART-health and
+  backup-awareness checks, with backup-overdue / SMART-failing reminders;
+  multi-select bulk reclaim; a git purge-safety badge.
 
-## Status & dashboard
-- **Network charts read at a glance.** Both the Status tile and the History
-  chart now draw download and upload as two separate lines — green down, blue
-  up — instead of one combined trace.
-- **Analyze feels alive.** The first scan of your home folder shows live
-  per-folder progress ("● ~/Downloads · 3/12") instead of a static "Measuring…".
-- **Optional camera/mic indicator.** The menu-bar popover can show when your
-  camera or microphone is in use (off by default — turn it on in
-  Settings → Menu bar). It reads the same system signal as Control Center.
+## For your AI agent
+- A deeper MCP surface: a token-gated `/events` **SSE stream** and `burrow_diff`
+  (e.g. login-item churn), so an agent can watch and compare your machine over
+  time.
 
-## Staying current
-- **Burrow checks itself for updates.** On by default (once a day, one
-  lightweight request), it shows a banner and a menu-bar dot when a new version
-  is out — and never installs anything on its own. "Check for Updates" and
-  "About Burrow" now live in Settings too. You can turn the auto-check off.
+## Windows preview (new)
+- An early native **WinUI 3 / .NET 8** app now lives under `windows/` — Status,
+  History, Analyze, Apps, a tray HUD, local telemetry/history, and an MCP stdio
+  bridge. Build from source; unsigned preview.
 
-## Fewer false alarms
-- **Confirm dialogs are no longer reported as freezes.** Pausing at a
-  confirmation or the Touch ID prompt blocks the main thread by design; the
-  crash reporter no longer mistakes that for an app hang.
+## Performance & stability
+- Killed several main-thread app-hangs (process table, sort, ICU on the render
+  path, app icons, clean reports, the software list). Onboarding now
+  auto-detects `mo`.
+
+## Under the hood
+- The repo is now a monorepo (`macos/` + `windows/`), with inside-out framework
+  signing for notarization and an automated upstream `mo` release watcher.
