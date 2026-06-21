@@ -169,6 +169,7 @@ SHARED_CSS = """  @font-face { font-family: "Geist"; src: url("assets/fonts/Geis
   footer a { color:var(--ink-2); text-decoration:underline; text-underline-offset:2px; }
   footer a:hover { color:var(--accent); }
   @media (max-width: 720px) { :root { --pad: 22px; } }
+  @media (max-width: 560px) { .brand .nm { display:none; } .topbar .btn { display:none; } }
 """
 
 
