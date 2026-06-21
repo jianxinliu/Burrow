@@ -72,8 +72,10 @@ def esc(s):
 
 
 def md_links(s):
-    """Escape HTML, then convert [text](url) to anchors."""
+    """Escape HTML, then convert `code`, **bold**, and [text](url) markup."""
     out = esc(s)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    out = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", out)
     return re.sub(r"\[([^\]]+)\]\(([^)]+)\)",
                   r'<a href="\2" target="_blank" rel="noopener">\1</a>', out)
 
@@ -94,13 +96,21 @@ def icon_svg(name):
 
 
 def validate(rel):
-    for h in rel["highlights"]:
+    # highlights/chips drive the homepage "What's new" cards (latest release).
+    for h in rel.get("highlights", []):
         if h["icon"] not in ICONS:
             sys.exit(f"releases.json: unknown icon '{h['icon']}' in {rel['version']} "
                      f"(valid: {', '.join(sorted(ICONS))})")
         if h["color"] not in COLORS:
             sys.exit(f"releases.json: unknown color '{h['color']}' in {rel['version']} "
                      f"(valid: {', '.join(sorted(COLORS))})")
+    # sections drive the categorized changelog on releases.html. Free-form
+    # label (added/changed/fixed/performance/…); items are markdown strings.
+    for s in rel.get("sections", []):
+        if not isinstance(s.get("label"), str) or not s["label"].strip():
+            sys.exit(f"releases.json: a section needs a non-empty 'label' in {rel['version']}")
+        if not isinstance(s.get("items"), list) or not all(isinstance(i, str) for i in s["items"]):
+            sys.exit(f"releases.json: section '{s.get('label')}' items must be a list of strings in {rel['version']}")
     date.fromisoformat(rel["date"])  # raises on bad dates
 
 
@@ -116,6 +126,18 @@ def render_chip(text, indent="      "):
     return (f'{indent}<span class="wn-chip"><svg viewBox="0 0 24 24" '
             f'stroke-linecap="round" stroke-linejoin="round">{CHECK_PATH}</svg>'
             f'{md_links(text)}</span>')
+
+
+def render_item(text):
+    return f'<li>{md_links(text)}</li>'
+
+
+def render_section_block(s):
+    items = "\n".join(f'            {render_item(it)}' for it in s["items"])
+    return (f'        <div class="sblock">\n'
+            f'          <div class="slabel mono">{esc(s["label"])}</div>\n'
+            f'          <ul class="slist">\n{items}\n          </ul>\n'
+            f'        </div>')
 
 
 def render_whatsnew(rel):
@@ -142,25 +164,30 @@ def render_whatsnew(rel):
 
 
 def render_history_entry(rel, latest):
-    hl = "\n".join(
-        f'        <div class="hl" style="--c: var(--{h["color"]})">\n'
-        f'          <div class="ico">{icon_svg(h["icon"])}</div>\n'
-        f'          <div><b>{esc(h["title"])}</b><p>{md_links(h["line"])}</p></div>\n'
-        f'        </div>' for h in rel["highlights"])
-    chips = "\n".join(render_chip(c, indent="        ") for c in rel["chips"])
     latest_chip = '<span class="latest">latest</span>' if latest else ""
-    return f"""    <article class="rel card" id="{esc(rel["tag"])}">
-      <header class="rel-head">
+    lead = f'        <p class="lead">{md_links(rel["tagline"])}</p>\n' if rel.get("tagline") else ""
+    if rel.get("sections"):
+        body = lead + "\n".join(render_section_block(s) for s in rel["sections"])
+        legacy = ""
+    else:
+        # Fallback for releases not yet migrated to categorized sections.
+        hl = "\n".join(
+            f'          <div class="hl" style="--c: var(--{h["color"]})">\n'
+            f'            <div class="ico">{icon_svg(h["icon"])}</div>\n'
+            f'            <div><b>{esc(h["title"])}</b><p>{md_links(h["line"])}</p></div>\n'
+            f'          </div>' for h in rel.get("highlights", []))
+        chips = "\n".join(render_chip(c, indent="          ") for c in rel.get("chips", []))
+        body = (f'{lead}        <div class="hls">\n{hl}\n        </div>\n'
+                f'        <div class="wn-chips">\n{chips}\n        </div>')
+        legacy = " legacy"
+    return f"""    <article class="entry" id="{esc(rel["tag"])}">
+      <div class="ver-col">
         <h2 class="ver">{esc(rel["version"])}{latest_chip}</h2>
         <span class="date mono">{pretty_date(rel["date"])}</span>
         <a class="gh mono" href="{REPO}/releases/tag/{esc(rel["tag"])}" target="_blank" rel="noopener">full notes ↗</a>
-      </header>
-      <p class="tagline">{md_links(rel["tagline"])}</p>
-      <div class="hls">
-{hl}
       </div>
-      <div class="wn-chips">
-{chips}
+      <div class="sbody{legacy}">
+{body}
       </div>
     </article>"""
 
@@ -228,17 +255,31 @@ def render_history(releases):
   .hero p { color:var(--ink-2); margin:14px 0 0; max-width:560px; }
   .hero .count { font-family:var(--mono); font-size:12.5px; color:var(--ink-3); margin-top:10px; }
   .card { background:var(--surface); border:1px solid var(--hair-2); border-radius:var(--r-card); box-shadow:0 1px 0 rgba(255,255,255,0.05) inset; }
-  main { padding-top: 28px; padding-bottom: 24px; display:grid; gap:18px; }
-  .rel { padding: 26px 28px; }
-  .rel-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
-  .ver { font-family:var(--heading); font-weight:600; font-size:30px; margin:0; display:inline-flex; align-items:center; gap:10px; }
-  .latest { font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; padding:4px 11px; border-radius:999px;
-    background:rgba(217,160,102,0.16); color:var(--accent); border:1px solid rgba(217,160,102,0.3); transform:translateY(-2px); }
-  .date { font-size:12.5px; color:var(--ink-3); }
-  .gh { margin-left:auto; font-size:12.5px; color:var(--ink-2); }
-  .gh:hover { color:var(--accent); }
-  .tagline { margin:10px 0 0; font-size:15.5px; color:var(--ink-2); }
-  .hls { margin-top:18px; display:grid; grid-template-columns:1fr 1fr; gap:14px 22px; }
+  main { padding-top: 8px; padding-bottom: 24px; }
+  /* Changelog — a version gutter on the left, categorized changes on the right. */
+  .entry { display:grid; grid-template-columns:152px 1fr; gap:32px; padding:38px 0; border-top:1px solid var(--hair-2); }
+  .entry:first-child { border-top:none; padding-top:6px; }
+  .ver-col { position:sticky; top:84px; align-self:start; }
+  .ver { font-family:var(--heading); font-weight:600; font-size:30px; line-height:1; margin:0; display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+  .latest { font-family:var(--mono); font-size:10px; letter-spacing:.04em; padding:3px 9px; border-radius:999px;
+    background:rgba(217,160,102,0.16); color:var(--accent); border:1px solid rgba(217,160,102,0.3); }
+  .ver-col .date { display:block; margin-top:9px; font-size:12.5px; color:var(--ink-3); }
+  .ver-col .gh { display:inline-block; margin-top:12px; font-size:12px; color:var(--ink-2); }
+  .ver-col .gh:hover { color:var(--accent); }
+  .lead { margin:0; font-size:15.5px; color:var(--ink-2); }
+  .sblock { margin-top:24px; }
+  .sbody > .sblock:first-child { margin-top:0; }
+  .slabel { font-size:11px; letter-spacing:.12em; color:var(--accent); text-transform:lowercase; margin-bottom:11px; }
+  .slist { list-style:none; margin:0; padding:0; display:grid; gap:11px; }
+  .slist > li { position:relative; padding-left:18px; font-size:14.5px; line-height:1.55; color:var(--ink); }
+  .slist > li::before { content:""; position:absolute; left:1px; top:8px; width:5px; height:5px; border-radius:50%;
+    background:color-mix(in srgb, var(--accent) 75%, transparent); }
+  .slist b { font-weight:600; }
+  .slist a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+  .slist .req { color:var(--ink-3); }
+  code { font-family:var(--mono); font-size:0.85em; padding:1px 6px; border-radius:7px; background:var(--surface-2); border:1px solid var(--hair-2); color:var(--ink); white-space:nowrap; }
+  /* Legacy card style — fallback for releases not yet migrated to sections. */
+  .sbody.legacy .hls { margin-top:16px; display:grid; grid-template-columns:1fr 1fr; gap:14px 22px; }
   .hl { display:flex; gap:12px; align-items:flex-start; }
   .hl .ico { width:32px; height:32px; border-radius:10px; display:grid; place-items:center; flex:0 0 auto; margin-top:2px;
     background:color-mix(in srgb, var(--c) 16%, transparent); border:1px solid color-mix(in srgb, var(--c) 36%, transparent); }
@@ -251,15 +292,15 @@ def render_history(releases):
     border:1px solid var(--hair-2); background:var(--surface); border-radius:999px; padding:7px 13px; }
   .wn-chip svg { width:12px; height:12px; stroke:var(--green); fill:none; stroke-width:2.4; flex:0 0 auto; }
   .wn-chip a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
-  footer { padding:36px 0 56px; }
+  footer { padding:36px 0 56px; border-top:1px solid var(--hair-2); margin-top:8px; }
   footer .page { font-size:13px; color:var(--ink-3); display:flex; gap:14px; flex-wrap:wrap; }
   footer a { color:var(--ink-2); text-decoration:underline; text-underline-offset:2px; }
   footer a:hover { color:var(--accent); }
   @media (max-width: 720px) {
     :root { --pad: 22px; }
-    .hls { grid-template-columns: 1fr; }
-    .rel { padding: 22px 20px; }
-    .gh { margin-left: 0; }
+    .entry { grid-template-columns:1fr; gap:12px; padding:28px 0; }
+    .ver-col { position:static; }
+    .sbody.legacy .hls { grid-template-columns:1fr; }
   }
 </style>
 </head>

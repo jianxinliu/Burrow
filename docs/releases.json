@@ -45,6 +45,48 @@
         "Killed several main-thread app-hangs (sort, ICU, process table, app icons)",
         "Onboarding now auto-detects the mo engine",
         "Monorepo (macos/ + windows/) with inside-out framework signing for notarization"
+      ],
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**Ports** — live connections, bandwidth, reverse-DNS peers, service labels, conflicts, sortable columns, and a per-connection detail view.",
+            "**Get Online** — MDM and gateway checks, the active-interface IP, captive-portal and device-side rescue, and one-click fixes.",
+            "**Tune-Up** — a Smart-Care flow (scan → results → run) that auto-scans the moment you open it.",
+            "**Homebrew** — Services (start / stop / restart), Brewfile snapshots (export / restore), and live `brew upgrade` progress in Updates.",
+            "**Menu bar** — a customizable popup, Stats-depth widgets, a RunCat-style runner, and live metric widgets in the status item.",
+            "**Disk** now forecasts when you'll run out of space (“Full in ~N”); **Doctor** gains SMART-health and backup-awareness checks with overdue reminders, multi-select bulk reclaim, and a git purge-safety badge.",
+            "**For your agent** — a deeper MCP surface: a token-gated `/events` SSE stream and `burrow_diff`, so an agent can watch and compare your machine over time."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "A warm, tactile redesign — a warm-coffee adaptive palette, film grain over a soft gradient, a floating icon rail in place of the top tabs, borderless cards, and the Geist / Cal Sans type system.",
+            "**Overview** — Health pulled up into an open hero band over a cleaner three-up vitals grid.",
+            "**History** — a focal hero chart with a selectable metric strip; drag-select a span to surface the top processes for that spike.",
+            "**Menu-bar HUD** — borderless tiles on the same warm ground, with Doctor and Restore reskinned to match and edge-fade scrollers throughout."
+          ]
+        },
+        {
+          "label": "performance",
+          "items": [
+            "Killed several main-thread app-hangs — the process table, sort, ICU on the render path, app icons, clean reports, and the software list.",
+            "Onboarding now auto-detects the `mo` engine."
+          ]
+        },
+        {
+          "label": "windows preview",
+          "items": [
+            "An early native **WinUI 3 / .NET 8** app now lives under `windows/` — Status, History, Analyze, Apps, a tray HUD, local telemetry/history, and an MCP stdio bridge. Build from source; unsigned preview."
+          ]
+        },
+        {
+          "label": "under the hood",
+          "items": [
+            "The repo is now a monorepo (`macos/` + `windows/`), with inside-out framework signing for notarization and an automated upstream `mo` release watcher."
+          ]
+        }
       ]
     },
     {
@@ -90,6 +132,33 @@
         "Live App Store / Sparkle update checks stay click-gated \u2014 no silent network",
         "View Log on every result screen (Clean / Optimize / Purge / Installers)",
         "About & Check for Updates now in Settings too"
+      ],
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**Cleanup, unified** — Purge and Installers fold into Clean as category cards, each with a real result screen and the raw log tucked behind a View Log toggle.",
+            "**Self-update** — Burrow checks itself for new versions (opt-in, default on) and shows a banner plus a menu-bar dot. It never installs on its own.",
+            "**Homebrew updates** appear the moment you open the Apps tab, and your own login items get on/off toggles.",
+            "An optional **camera & mic in-use indicator** in the menu-bar popover (off by default), reading the same signal as Control Center.",
+            "**About** and **Check for Updates** now live in Settings too."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "Network charts in Status and History draw download and upload as two separate lines.",
+            "Analyze shows live per-folder progress on the first scan.",
+            "A View Log toggle on every result screen — Clean, Optimize, Purge, and Installers."
+          ]
+        },
+        {
+          "label": "fixed",
+          "items": [
+            "Confirm dialogs and Touch ID are no longer reported as app-hangs.",
+            "Live App Store / Sparkle update checks stay click-gated — no silent network."
+          ]
+        }
       ]
     },
     {
@@ -125,12 +194,68 @@
         "Process-row Quit/Force-Kill menu no longer rebuilt every refresh",
         "GPU history bars draw again on Apple Silicon",
         "One shared refresh pump for HUD / Status / Activity"
+      ],
+      "sections": [
+        {
+          "label": "fixed",
+          "items": [
+            "The History view no longer freezes on wide time ranges.",
+            "Typing in Uninstall and Purge is smooth again.",
+            "Fixed a crash opening the menu-bar popover charts — it and the Status mini-charts could segfault on a transition, and now draw as one stable shape.",
+            "GPU history bars draw again on Apple Silicon."
+          ]
+        },
+        {
+          "label": "performance",
+          "items": [
+            "Faster launch — `mo` discovery moved off the main thread.",
+            "The HUD, Status, and Activity panels share one refresh pump now.",
+            "The process-row Quit / Force-Kill menu is no longer rebuilt on every refresh."
+          ]
+        }
       ]
     },
     {
       "version": "0.7.0",
       "date": "2026-06-13",
       "tag": "v0.7.0",
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**New Software tab** — per-app uninstall review, a unified Updates list with source badges, and a startup inventory.",
+            "**Review before you clean** — Scan streams a live count-up into a per-item review screen, and deselected paths are protected for exactly one run.",
+            "**Finish-line alerts** — get notified when a clean, optimize, or uninstall finishes, plus opt-in low-disk and Trash reminders.",
+            "Keep Screen On, Clean Screen, and global shortcuts."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "Every tool redesigned — Onboarding, Clean, Software, Status, the menu-bar popover, Analyze, and Settings, all rebuilt.",
+            "History CPU, GPU, and health render as bars, and GPU usage is read natively on Apple Silicon.",
+            "A compact, scrollable process table.",
+            "MCP cleanup tools share the app's gate, return structured summaries, and surface data-freshness on a stable contract.",
+            "~230 strings localized in 简体中文 / 繁體中文."
+          ]
+        },
+        {
+          "label": "fixed",
+          "items": [
+            "One-click relaunch the moment Full Disk Access is granted.",
+            "First-run onboarding checks the `mo` engine and version.",
+            "Truthful Touch ID copy.",
+            "The dashboard survives a bad metrics sample (skipped and counted) instead of stalling."
+          ]
+        },
+        {
+          "label": "performance",
+          "items": [
+            "History auto-refresh is demand-driven — no idle timer.",
+            "A deepened, test-covered `mo` runner / metrics / actions core."
+          ]
+        }
+      ],
       "tagline": "The big one \u2014 every tool redesigned, a real Clean review pipeline, a new Software tab, and notifications when work finishes.",
       "highlights": [
         {
@@ -186,6 +311,35 @@
       "version": "0.6.7",
       "date": "2026-06-11",
       "tag": "v0.6.7",
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**One Home dashboard** — Status, History, and Activity fold into a single live view: vitals, charts, and recent jobs in one place.",
+            "**繁體中文** — Traditional Chinese joins English and 简体, with an in-app switch, so you're not tied to the system language.",
+            "**Real fans & temps** — fan RPM and CPU/GPU die temperatures, read straight from the SMC — the gaps `mo` leaves on Apple Silicon, filled.",
+            "**1-second live charts** — net and disk sampled every second, so bursts show up instead of being averaged away.",
+            "**Trash from the treemap** — spot a forgotten folder in Analyze and send it to the Trash right there, no detour to Finder.",
+            "**Sharper AI Explain** — it briefs the whole picture now: the current snapshot, the recent trend, and your recent cleanups, in your language."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "Opt-out anonymous telemetry — one switch, listed in [TELEMETRY.md](https://github.com/caezium/Burrow/blob/main/TELEMETRY.md).",
+            "AI keys moved to the Keychain.",
+            "Deletes and uninstalls need a second agent opt-in."
+          ]
+        },
+        {
+          "label": "fixed",
+          "items": [
+            "The loopback API is hardened — no CORS grant.",
+            "Treemap hover and breadcrumb fixed.",
+            "Tests grew 124 → 244."
+          ]
+        }
+      ],
       "tagline": "The biggest release yet \u2014 one Home dashboard, \u7e41\u9ad4\u4e2d\u6587, native sensors, live 1-second charts.",
       "highlights": [
         {
@@ -238,6 +392,22 @@
       "version": "0.6.5",
       "date": "2026-06-09",
       "tag": "v0.6.5",
+      "sections": [
+        {
+          "label": "fixed",
+          "items": [
+            "Installers and Purge no longer freeze when `mo` finds nothing, or on a second scan — the “Scanning…” hang is gone."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "The “remove exactly what you picked — or nothing” flow is now a pure state machine, verified in CI.",
+            "One ANSI cleaner, one typed client, one snapshot store.",
+            "Tests grew 90 → 124."
+          ]
+        }
+      ],
       "tagline": "A reliability release \u2014 the selection flows stop hanging, and the engine integration is now driven by tests.",
       "highlights": [
         {
@@ -262,6 +432,30 @@
       "version": "0.6.0",
       "date": "2026-06-08",
       "tag": "v0.6.0",
+      "sections": [
+        {
+          "label": "fixed",
+          "items": [
+            "**Installer & Uninstall complete** — the confirm-screen timeout and the silent `[y/N]` hang are gone; both flows finish now.",
+            "Settings flush immediately."
+          ]
+        },
+        {
+          "label": "added",
+          "items": [
+            "**Native disk I/O & GPU** — read natively where `mo` reports zero on Apple Silicon, so charts show real numbers.",
+            "**Purge → Show all** — pull in the complete find list and pick from everything, not just the ~50 biggest.",
+            "**More history charts** — Battery, GPU, and Fans join the lineup; Top Processes ranks by CPU or RAM.",
+            "The thermal chart plots a real temperature."
+          ]
+        },
+        {
+          "label": "performance",
+          "items": [
+            "Faster live sampling catches short spikes."
+          ]
+        }
+      ],
       "tagline": "Fix-and-polish \u2014 cleanup flows actually complete, and the trackers show real data.",
       "highlights": [
         {
@@ -299,6 +493,24 @@
       "version": "0.5.5",
       "date": "2026-06-08",
       "tag": "v0.5.5",
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**Purge** — find and clear old build artifacts (`node_modules`, `target/`, `build/`), ticking exactly what goes.",
+            "**Installers** — sweep leftover `.dmg` / `.pkg` / `.iso` / `.zip` with the same pick-what-to-remove flow.",
+            "**Explain (AI), opt-in** — a lens that reads one snapshot and explains it in plain English; local Ollama by default, nothing leaves the Mac.",
+            "**Agents can act over MCP** — `burrow_clean`, `_optimize`, `_uninstall` and friends, each dry-running unless you flip the real-cleanups switch."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "Every agent action defaults to `--dry-run`.",
+            "LM Studio and OpenAI-compatible backends are supported."
+          ]
+        }
+      ],
       "tagline": "Two new cleanup tools, an AI lens on Status, and agents that can act \u2014 safely.",
       "highlights": [
         {
@@ -335,6 +547,27 @@
       "version": "0.5.1",
       "date": "2026-06-08",
       "tag": "v0.5.1",
+      "sections": [
+        {
+          "label": "fixed",
+          "items": [
+            "**Full Disk Access works** — ad-hoc signing gives the app a stable code identity, so the TCC grant finally binds.",
+            "A Quit & Reopen path after granting Full Disk Access."
+          ]
+        },
+        {
+          "label": "added",
+          "items": [
+            "New read-only MCP tools: `burrow_cleanup_history` and `burrow_deleted_files`."
+          ]
+        },
+        {
+          "label": "performance",
+          "items": [
+            "Less energy in Software — dropped the per-app Spotlight query that kept `mds` and `mdworker` awake."
+          ]
+        }
+      ],
       "tagline": "Maintenance \u2014 Full Disk Access actually sticks now.",
       "highlights": [
         {
@@ -359,6 +592,27 @@
       "version": "0.5.0",
       "date": "2026-06-08",
       "tag": "v0.5.0",
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**Touch ID for sudo** — cleanups that need admin rights authenticate with a fingerprint, via `mo touchid`.",
+            "**Menu-bar HUD** — live job status from the menu bar, or run without the icon entirely in Dock mode.",
+            "**MCP server** — ask Claude Code about your Mac through a read-only stdio server, including `burrow_process_usage`.",
+            "**简体中文** — Simplified Chinese localization.",
+            "**History** — long-range charts, five minutes out to ninety days, over a local SQLite store.",
+            "**Homebrew cask** — `brew install --cask caezium/tap/burrow`: one command, engine included, quarantine cleared.",
+            "An Activity pane with cleanup history in-app."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "A Full Disk Access gate stops the per-folder permission flood.",
+            "Guided `mo` setup on first run."
+          ]
+        }
+      ],
       "tagline": "Burrow grows up \u2014 Touch ID, a live menu-bar HUD, an MCP server, \u7b80\u4f53\u4e2d\u6587, and a one-command install.",
       "highlights": [
         {
@@ -408,6 +662,22 @@
       "version": "0.4.0",
       "date": "2026-06-04",
       "tag": "v0.4.0",
+      "sections": [
+        {
+          "label": "added",
+          "items": [
+            "**Five tools, one window** — Status, Analyze, Software, Clean, and Optimize: a native macOS GUI for the audited `mo` engine.",
+            "**Status + History** — a live dashboard with per-metric sparklines, and long-range charts on a local store.",
+            "**MCP server, day one** — HTTP + stdio endpoints so Claude Code can ask what's happening on this Mac."
+          ]
+        },
+        {
+          "label": "notes",
+          "items": [
+            "macOS 14+; requires `brew install mole`; unsigned, pre-1.0."
+          ]
+        }
+      ],
       "tagline": "First public release \u2014 five tools, one native window, built on the Mole CLI.",
       "highlights": [
         {
