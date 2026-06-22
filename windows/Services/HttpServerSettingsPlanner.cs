@@ -6,7 +6,6 @@ public enum HttpServerSettingsAction
 {
     None,
     Start,
-    Stop,
     Restart
 }
 

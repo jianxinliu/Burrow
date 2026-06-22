@@ -1,0 +1,24 @@
+{
+  "colors": {
+    "background": "#121217",
+    "backgroundSoft": "#16161D",
+    "ink": "#F3ECDD",
+    "accent": "#D9A066",
+    "onAccent": "#241B12",
+    "green": "#57D58E",
+    "gold": "#E6A93C",
+    "orange": "#F2894E",
+    "blue": "#5AA8F0",
+    "red": "#F0604E",
+    "purple": "#8E84F0"
+  },
+  "fonts": {
+    "heading": "Cal Sans",
+    "body": "Geist",
+    "mono": "Geist Mono"
+  },
+  "sources": {
+    "icon": "brand/app-icon.png",
+    "fonts": "brand/fonts/"
+  }
+}

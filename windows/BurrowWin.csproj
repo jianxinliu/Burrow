@@ -6,6 +6,7 @@
     <RootNamespace>BurrowWin</RootNamespace>
     <Version>0.8.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Platforms>x86;x64;ARM64</Platforms>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
     <PublishProfile Condition="Exists('Properties\PublishProfiles\win-$(Platform).pubxml')">win-$(Platform).pubxml</PublishProfile>
@@ -35,6 +36,7 @@
     <Content Include="Assets\StoreLogo.png" />
     <Content Include="Assets\AppIcon.ico" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+    <Content Include="Assets\Fonts\*.woff2" />
     <Content Include="Assets\mo.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\mo.exe')" />
     <Content Include="Assets\mo.cmd" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\mo.cmd')" />
     <Content Include="Assets\mole.ps1" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\mole.ps1')" />

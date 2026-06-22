@@ -9,14 +9,14 @@
 
   <Identity
     Name="DA9687FB-09FD-4C4D-B67F-C35B87E6974E"
-    Publisher="CN=AppPublisher"
+    Publisher="CN=Caezium"
     Version="0.8.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="DA9687FB-09FD-4C4D-B67F-C35B87E6974E" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>BurrowWin</DisplayName>
-    <PublisherDisplayName>AppPublisher</PublisherDisplayName>
+    <DisplayName>Burrow</DisplayName>
+    <PublisherDisplayName>Caezium</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -34,9 +34,9 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
-        DisplayName="BurrowWin"
-        Description="BurrowWin"
-        BackgroundColor="transparent"
+        DisplayName="Burrow"
+        Description="A native Windows preview of Burrow, powered by Mole."
+        BackgroundColor="#121217"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />

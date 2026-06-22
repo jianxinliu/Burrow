@@ -71,9 +71,11 @@ This is the part people rightly scrutinize in cleaners. Burrow's model:
   **[TELEMETRY.md](TELEMETRY.md)**.
 - **Local-only surfaces:**
   - The MCP **HTTP query server** binds `127.0.0.1:9277` (loopback only; **on
-    by default**, toggle it off in Settings). It serves your local metrics to
-    local MCP clients; it is not reachable off-device, and it sends no CORS
-    grant, so web pages in your browser can't read it either.
+    by default**). It serves your local metrics to local MCP clients; it is not
+    reachable off-device, and it sends no CORS grant, so web pages in your
+    browser can't read it either. In the Windows preview, the Settings toggle
+    disables REST endpoints but keeps the loopback `/mcp` route bound so the
+    stdio bridge can continue to work.
   - The **stdio MCP server** (`Burrow --mcp`) is a local subprocess.
   - History is a local **SQLite** file under
     `~/Library/Application Support/Burrow/`.

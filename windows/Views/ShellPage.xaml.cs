@@ -61,7 +61,7 @@ public sealed partial class ShellPage : Page
 
     private void UpdateSelectedRoute(string route)
     {
-        BurrowButtonVisualState.ApplyNavigationState(BrandButton, true);
+        BurrowButtonVisualState.Freeze(BrandButton);
 
         foreach (var button in GetRouteButtons())
         {

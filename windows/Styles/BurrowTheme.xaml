@@ -3,23 +3,25 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Color x:Key="BurrowColorBackground">#0D0F0F</Color>
+    <Color x:Key="BurrowColorBackground">#121217</Color>
     <Color x:Key="BurrowColorBackgroundGreen">#0C1B16</Color>
     <Color x:Key="BurrowColorBackgroundBlue">#0B1620</Color>
     <Color x:Key="BurrowColorBackgroundBrown">#1A120C</Color>
     <Color x:Key="BurrowColorBackgroundPurple">#11101F</Color>
-    <Color x:Key="BurrowColorPanel">#1D1D1B</Color>
+    <Color x:Key="BurrowColorPanel">#1D1D22</Color>
     <Color x:Key="BurrowColorPanelWarm">#221C16</Color>
-    <Color x:Key="BurrowColorStroke">#393835</Color>
-    <Color x:Key="BurrowColorText">#F7F4EE</Color>
-    <Color x:Key="BurrowColorMuted">#A7A29C</Color>
-    <Color x:Key="BurrowColorDim">#77746F</Color>
-    <Color x:Key="BurrowColorGreen">#75D893</Color>
-    <Color x:Key="BurrowColorGold">#E7B34D</Color>
-    <Color x:Key="BurrowColorOrange">#F18B55</Color>
-    <Color x:Key="BurrowColorBlue">#77B7FF</Color>
-    <Color x:Key="BurrowColorRed">#EF6A5E</Color>
-    <Color x:Key="BurrowColorPurple">#8E7CF2</Color>
+    <Color x:Key="BurrowColorStroke">#343238</Color>
+    <Color x:Key="BurrowColorText">#F3ECDD</Color>
+    <Color x:Key="BurrowColorMuted">#B5AEA2</Color>
+    <Color x:Key="BurrowColorDim">#807A72</Color>
+    <Color x:Key="BurrowColorAccent">#D9A066</Color>
+    <Color x:Key="BurrowColorOnAccent">#241B12</Color>
+    <Color x:Key="BurrowColorGreen">#57D58E</Color>
+    <Color x:Key="BurrowColorGold">#E6A93C</Color>
+    <Color x:Key="BurrowColorOrange">#F2894E</Color>
+    <Color x:Key="BurrowColorBlue">#5AA8F0</Color>
+    <Color x:Key="BurrowColorRed">#F0604E</Color>
+    <Color x:Key="BurrowColorPurple">#8E84F0</Color>
 
     <SolidColorBrush x:Key="BurrowBackgroundBrush" Color="{StaticResource BurrowColorBackground}" />
     <SolidColorBrush x:Key="BurrowBackgroundGreenBrush" Color="{StaticResource BurrowColorBackgroundGreen}" />
@@ -32,6 +34,8 @@
     <SolidColorBrush x:Key="BurrowTextBrush" Color="{StaticResource BurrowColorText}" />
     <SolidColorBrush x:Key="BurrowMutedBrush" Color="{StaticResource BurrowColorMuted}" />
     <SolidColorBrush x:Key="BurrowDimBrush" Color="{StaticResource BurrowColorDim}" />
+    <SolidColorBrush x:Key="BurrowAccentBrush" Color="{StaticResource BurrowColorAccent}" />
+    <SolidColorBrush x:Key="BurrowOnAccentBrush" Color="{StaticResource BurrowColorOnAccent}" />
     <SolidColorBrush x:Key="BurrowGreenBrush" Color="{StaticResource BurrowColorGreen}" />
     <SolidColorBrush x:Key="BurrowGoldBrush" Color="{StaticResource BurrowColorGold}" />
     <SolidColorBrush x:Key="BurrowOrangeBrush" Color="{StaticResource BurrowColorOrange}" />
@@ -40,8 +44,9 @@
     <SolidColorBrush x:Key="BurrowPurpleBrush" Color="{StaticResource BurrowColorPurple}" />
     <SolidColorBrush x:Key="BurrowWhitePillBrush" Color="#FFFDF8" />
 
-    <FontFamily x:Key="BurrowMonoFont">Cascadia Mono, Consolas</FontFamily>
-    <FontFamily x:Key="BurrowSerifFont">Georgia</FontFamily>
+    <FontFamily x:Key="BurrowTextFont">ms-appx:///Assets/Fonts/Geist[wght].woff2#Geist, Segoe UI</FontFamily>
+    <FontFamily x:Key="BurrowMonoFont">ms-appx:///Assets/Fonts/GeistMono[wght].woff2#Geist Mono, Consolas</FontFamily>
+    <FontFamily x:Key="BurrowSerifFont">ms-appx:///Assets/Fonts/CalSans-SemiBold.woff2#Cal Sans, Segoe UI</FontFamily>
 
     <Style x:Key="TitleTextBlockStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource BurrowSerifFont}" />

@@ -33,29 +33,16 @@
                 Width="70"
                 Height="70"
                 Padding="0"
+                Background="Transparent"
+                BorderBrush="Transparent"
+                BorderThickness="0"
                 Click="TopNav_Click"
-                Style="{StaticResource BurrowIconButtonSelectedStyle}"
                 Tag="status">
-                <Grid>
-                    <Ellipse Stroke="#3D3A34" StrokeThickness="2" />
-                    <Ellipse
-                        Margin="8"
-                        Stroke="#77736A"
-                        StrokeThickness="4" />
-                    <Ellipse
-                        Width="48"
-                        Height="48"
-                        Fill="{StaticResource BurrowWhitePillBrush}" />
-                    <Path
-                        Width="32"
-                        Height="16"
-                        Margin="0,14,0,0"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        Data="M0,16 C1.4,5.4 7.8,0 16,0 C24.2,0 30.6,5.4 32,16 L32,20 L0,20 Z"
-                        Fill="Black"
-                        Stretch="Fill" />
-                </Grid>
+                <Image
+                    Width="70"
+                    Height="70"
+                    Source="ms-appx:///Assets/Square150x150Logo.scale-200.png"
+                    Stretch="Uniform" />
             </Button>
 
             <Border

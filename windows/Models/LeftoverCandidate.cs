@@ -21,5 +21,5 @@ public partial class LeftoverCandidate : ObservableObject
     public string SizeText => SystemTelemetryFormatter.Bytes(SizeBytes);
 
     [ObservableProperty]
-    private bool isSelected = true;
+    private bool isSelected;
 }

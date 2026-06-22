@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Net;
 using System.Text.Json.Nodes;
 using BurrowWin.Models;
 using BurrowWin.Services;
@@ -8,6 +9,42 @@ namespace BurrowWin.Tests;
 
 public sealed class LocalMcpServerServiceTests
 {
+    [Fact]
+    public void RequestGate_AllowsOnlyLoopbackAndLocalOrigins()
+    {
+        Assert.True(LocalMcpServerService.IsRequestAllowed(IPAddress.Loopback, null));
+        Assert.True(LocalMcpServerService.IsRequestAllowed(IPAddress.IPv6Loopback, "http://localhost:3000"));
+        Assert.True(LocalMcpServerService.IsRequestAllowed(IPAddress.Loopback, "http://127.0.0.1:9277"));
+
+        Assert.False(LocalMcpServerService.IsRequestAllowed(IPAddress.Parse("192.168.1.10"), null));
+        Assert.False(LocalMcpServerService.IsRequestAllowed(IPAddress.Loopback, "https://example.com"));
+        Assert.False(LocalMcpServerService.IsRequestAllowed(IPAddress.Loopback, "not a uri"));
+    }
+
+    [Fact]
+    public void ShouldBlockRestEndpoint_AllowsMcpWhenRestIsDisabled()
+    {
+        Assert.True(LocalMcpServerService.ShouldBlockRestEndpoint(false, "/health", "GET"));
+        Assert.True(LocalMcpServerService.ShouldBlockRestEndpoint(false, "/mcp", "GET"));
+        Assert.False(LocalMcpServerService.ShouldBlockRestEndpoint(false, "/mcp", "POST"));
+        Assert.False(LocalMcpServerService.ShouldBlockRestEndpoint(true, "/health", "GET"));
+    }
+
+    [Fact]
+    public void BuildMcpToolArray_IncludesCanonicalCrossPlatformToolNames()
+    {
+        var tools = BuildMcpTools();
+        var names = tools
+            .Select(tool => tool?["name"]?.GetValue<string>())
+            .Where(name => name is not null)
+            .ToArray();
+
+        Assert.Contains("burrow_list_apps", names);
+        Assert.Contains("burrow_purge", names);
+        Assert.Contains("burrow_installer", names);
+        Assert.Contains("burrow_uninstall", names);
+    }
+
     [Fact]
     public async Task ExecuteToolByNameAsync_RejectsStringConfirm()
     {
@@ -40,16 +77,83 @@ public sealed class LocalMcpServerServiceTests
         Assert.Contains("limit", response["error"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static LocalMcpServerService BuildService(FakeMoleEngineService engine)
+    [Fact]
+    public async Task ExecuteToolByNameAsync_ListAppsUsesCanonicalToolName()
+    {
+        var appService = new FakeInstalledApplicationService();
+        appService.Apps.Add(new InstalledApplication(
+            "test-app",
+            "Test App",
+            "Example Publisher",
+            "1.0",
+            @"C:\Users\me\AppData\Local\Test App",
+            "uninstall.exe",
+            "Registry",
+            2048));
+        var service = BuildService(new FakeMoleEngineService(), appService: appService);
+
+        var response = await ExecuteToolAsync(service, "burrow_list_apps", new JsonObject());
+
+        Assert.Equal("burrow_list_apps", response["tool"]!.GetValue<string>());
+        Assert.Equal(1, response["count"]!.GetValue<int>());
+        Assert.Equal(1, response["returned"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task ExecuteToolByNameAsync_PurgeIsPreviewOnly()
+    {
+        var service = BuildService(
+            new FakeMoleEngineService(),
+            purgeService: new FakePurgeArtifactService());
+        var arguments = new JsonObject
+        {
+            ["confirm"] = true
+        };
+
+        var response = await ExecuteToolAsync(service, "burrow_purge", arguments);
+
+        Assert.Equal("preview", response["action"]!.GetValue<string>());
+        Assert.True(response["confirm_requested"]!.GetValue<bool>());
+        Assert.False(response["mcp_removal_supported"]!.GetValue<bool>());
+        Assert.Equal(1, response["count"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task ExecuteToolByNameAsync_InstallerIsPreviewOnly()
+    {
+        var service = BuildService(
+            new FakeMoleEngineService(),
+            installerService: new FakeInstallerCleanupService());
+        var arguments = new JsonObject
+        {
+            ["confirm"] = true
+        };
+
+        var response = await ExecuteToolAsync(service, "burrow_installer", arguments);
+
+        Assert.Equal("preview", response["action"]!.GetValue<string>());
+        Assert.True(response["confirm_requested"]!.GetValue<bool>());
+        Assert.False(response["mcp_removal_supported"]!.GetValue<bool>());
+        Assert.Equal(1, response["count"]!.GetValue<int>());
+    }
+
+    private static LocalMcpServerService BuildService(
+        FakeMoleEngineService engine,
+        FakeInstalledApplicationService? appService = null,
+        FakePurgeArtifactService? purgeService = null,
+        FakeInstallerCleanupService? installerService = null,
+        FakeApplicationSettingsService? settingsService = null)
     {
         return new LocalMcpServerService(
             engine,
             new FakeDiskAnalyzerService(),
             new FakeTelemetrySamplerService(),
             new FakeTelemetryHistoryService(),
-            new FakeInstalledApplicationService(),
+            appService ?? new FakeInstalledApplicationService(),
+            purgeService ?? new FakePurgeArtifactService([]),
+            installerService ?? new FakeInstallerCleanupService([]),
             new FakeOperationHistoryService(),
-            new FakeApplicationSettingsService());
+            settingsService ?? new FakeApplicationSettingsService());
     }
 
     private static async Task<JsonObject> ExecuteToolAsync(
@@ -66,6 +170,16 @@ public sealed class LocalMcpServerServiceTests
             service,
             [name, arguments, CancellationToken.None])!;
         return await task.ConfigureAwait(false);
+    }
+
+    private static JsonArray BuildMcpTools()
+    {
+        var method = typeof(LocalMcpServerService).GetMethod(
+            "BuildMcpToolArray",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        return (JsonArray)method.Invoke(null, [])!;
     }
 
     private sealed class FakeMoleEngineService : IMoleEngineService
@@ -138,9 +252,11 @@ public sealed class LocalMcpServerServiceTests
 
     private sealed class FakeInstalledApplicationService : IInstalledApplicationService
     {
+        public List<InstalledApplication> Apps { get; } = [];
+
         public Task<IReadOnlyList<InstalledApplication>> GetInstalledApplicationsAsync(CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<IReadOnlyList<InstalledApplication>>([]);
+            return Task.FromResult<IReadOnlyList<InstalledApplication>>(Apps);
         }
 
         public Task<IReadOnlyList<LeftoverCandidate>> PreviewLeftoversAsync(
@@ -159,6 +275,82 @@ public sealed class LocalMcpServerServiceTests
 
         public Task<IReadOnlyList<LeftoverRemovalResult>> RemoveLeftoversAsync(
             IEnumerable<LeftoverCandidate> leftovers,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<LeftoverRemovalResult>>([]);
+        }
+    }
+
+    private sealed class FakePurgeArtifactService : IPurgeArtifactService
+    {
+        private readonly IReadOnlyList<PurgeProjectCandidate> _projects;
+
+        public FakePurgeArtifactService()
+            : this([
+                new PurgeProjectCandidate(
+                    "sample",
+                    @"C:\Users\me\sample",
+                    "package.json",
+                    [
+                        new PurgeArtifactCandidate(
+                            "node_modules",
+                            @"C:\Users\me\sample\node_modules",
+                            "dependency cache",
+                            "node",
+                            4096)
+                    ])
+            ])
+        {
+        }
+
+        public FakePurgeArtifactService(IReadOnlyList<PurgeProjectCandidate> projects)
+        {
+            _projects = projects;
+        }
+
+        public Task<IReadOnlyList<PurgeProjectCandidate>> PreviewAsync(
+            IReadOnlyList<string>? searchRoots = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_projects);
+        }
+
+        public Task<IReadOnlyList<LeftoverRemovalResult>> RemoveAsync(
+            IReadOnlyList<PurgeProjectCandidate> projects,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<LeftoverRemovalResult>>([]);
+        }
+    }
+
+    private sealed class FakeInstallerCleanupService : IInstallerCleanupService
+    {
+        private readonly IReadOnlyList<InstallerCleanupCandidate> _candidates;
+
+        public FakeInstallerCleanupService()
+            : this([
+                new InstallerCleanupCandidate(
+                    "setup.exe",
+                    @"C:\Users\me\Downloads\setup.exe",
+                    "Installer",
+                    8192,
+                    DateTimeOffset.UtcNow.AddDays(-40))
+            ])
+        {
+        }
+
+        public FakeInstallerCleanupService(IReadOnlyList<InstallerCleanupCandidate> candidates)
+        {
+            _candidates = candidates;
+        }
+
+        public Task<IReadOnlyList<InstallerCleanupCandidate>> PreviewAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_candidates);
+        }
+
+        public Task<IReadOnlyList<LeftoverRemovalResult>> RemoveAsync(
+            IReadOnlyList<InstallerCleanupCandidate> candidates,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<LeftoverRemovalResult>>([]);

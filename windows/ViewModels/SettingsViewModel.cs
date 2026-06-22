@@ -115,7 +115,7 @@ public partial class SettingsViewModel : ViewModelBase
         RunOnUiThread(() =>
         {
             ApplySettings(saved);
-            SettingsStatus = "Settings saved. Sampling, tray, HTTP, MCP, and telemetry gates apply immediately.";
+            SettingsStatus = "Settings saved. Sampling, tray, REST endpoints, MCP, and telemetry gates apply immediately.";
         });
     }
 
@@ -145,8 +145,8 @@ public partial class SettingsViewModel : ViewModelBase
         McpDestructiveActionsEnabled = settings.McpDestructiveActionsEnabled;
         TelemetryEnabled = settings.TelemetryEnabled;
         McpEndpoint = settings.HttpServerEnabled
-            ? $"http://127.0.0.1:{settings.HttpServerPort}"
-            : "Disabled";
+            ? $"REST + MCP on http://127.0.0.1:{settings.HttpServerPort}"
+            : $"REST disabled; local MCP bridge remains on http://127.0.0.1:{settings.HttpServerPort}/mcp";
     }
 
     private static int ParseInt(string value, int fallback)

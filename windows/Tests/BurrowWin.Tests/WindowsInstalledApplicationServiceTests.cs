@@ -1,3 +1,4 @@
+using BurrowWin.Models;
 using BurrowWin.Services;
 using Xunit;
 
@@ -5,6 +6,14 @@ namespace BurrowWin.Tests;
 
 public sealed class WindowsInstalledApplicationServiceTests
 {
+    [Fact]
+    public void LeftoverCandidate_DefaultsToNotSelected()
+    {
+        var candidate = new LeftoverCandidate("Local app data", @"C:\Users\me\AppData\Local\Example", 1);
+
+        Assert.False(candidate.IsSelected);
+    }
+
     [Fact]
     public void CreateApplicationFromRegistryValues_ReturnsApplication()
     {

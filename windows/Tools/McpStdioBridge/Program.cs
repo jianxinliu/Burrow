@@ -224,7 +224,20 @@ internal static class Program
                 ["max_depth"] = Schema("integer", "Maximum recursive depth."),
                 ["max_children"] = Schema("integer", "Maximum children per directory.")
             }),
-            Tool("burrow_uninstall", "List apps, preview leftovers, or launch a confirmed vendor uninstaller.", new JsonObject
+            Tool("burrow_list_apps", "Installed Windows applications and the IDs `burrow_uninstall` accepts. Read-only.", new JsonObject
+            {
+                ["search"] = Schema("string", "Optional search text."),
+                ["limit"] = Schema("integer", "Maximum applications to return.")
+            }),
+            Tool("burrow_purge", "Find project build artifacts using the Windows fallback preview. PREVIEW over MCP: real removal must be run from the BurrowWin GUI.", new JsonObject
+            {
+                ["confirm"] = Schema("boolean", "Reserved. Real purge removal is GUI-only over Windows MCP; any value still returns the preview.")
+            }),
+            Tool("burrow_installer", "Find leftover installer/archive files using the Windows fallback preview. PREVIEW over MCP: real removal must be run from the BurrowWin GUI.", new JsonObject
+            {
+                ["confirm"] = Schema("boolean", "Reserved. Real installer cleanup is GUI-only over Windows MCP; any value still returns the preview.")
+            }),
+            Tool("burrow_uninstall", "Windows compatibility tool: list apps, preview leftovers, or launch a confirmed vendor uninstaller.", new JsonObject
             {
                 ["action"] = Schema("string", "One of list, preview_leftovers, or launch_uninstaller."),
                 ["app_id"] = Schema("string", "Installed application ID returned by the list action."),

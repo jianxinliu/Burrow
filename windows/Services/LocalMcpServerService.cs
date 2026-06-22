@@ -18,6 +18,8 @@ public sealed class LocalMcpServerService : BackgroundService
     private readonly ISystemTelemetrySamplerService _telemetrySamplerService;
     private readonly ISystemTelemetryHistoryService _systemTelemetryHistoryService;
     private readonly IInstalledApplicationService _installedApplicationService;
+    private readonly IPurgeArtifactService _purgeArtifactService;
+    private readonly IInstallerCleanupService _installerCleanupService;
     private readonly IOperationHistoryService _operationHistoryService;
     private readonly IApplicationSettingsService _settingsService;
     private readonly SemaphoreSlim _listenerGate = new(1, 1);
@@ -32,6 +34,8 @@ public sealed class LocalMcpServerService : BackgroundService
         ISystemTelemetrySamplerService telemetrySamplerService,
         ISystemTelemetryHistoryService systemTelemetryHistoryService,
         IInstalledApplicationService installedApplicationService,
+        IPurgeArtifactService purgeArtifactService,
+        IInstallerCleanupService installerCleanupService,
         IOperationHistoryService operationHistoryService,
         IApplicationSettingsService settingsService)
     {
@@ -40,6 +44,8 @@ public sealed class LocalMcpServerService : BackgroundService
         _telemetrySamplerService = telemetrySamplerService;
         _systemTelemetryHistoryService = systemTelemetryHistoryService;
         _installedApplicationService = installedApplicationService;
+        _purgeArtifactService = purgeArtifactService;
+        _installerCleanupService = installerCleanupService;
         _operationHistoryService = operationHistoryService;
         _settingsService = settingsService;
     }
@@ -97,10 +103,6 @@ public sealed class LocalMcpServerService : BackgroundService
 
             await StopListenerLockedAsync().ConfigureAwait(false);
             _activePort = normalized.HttpServerPort;
-            if (action == HttpServerSettingsAction.Stop)
-            {
-                return;
-            }
 
             var listener = new HttpListener();
             listener.Prefixes.Add($"http://127.0.0.1:{_activePort}/");
@@ -201,7 +203,7 @@ public sealed class LocalMcpServerService : BackgroundService
 
     private async Task HandleRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
-        if (!IsLoopback(context.Request.RemoteEndPoint?.Address) || !IsAllowedOrigin(context.Request.Headers["Origin"]))
+        if (!IsRequestAllowed(context.Request.RemoteEndPoint?.Address, context.Request.Headers["Origin"]))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             context.Response.Close();
@@ -209,8 +211,7 @@ public sealed class LocalMcpServerService : BackgroundService
         }
 
         var path = context.Request.Url?.AbsolutePath.TrimEnd('/').ToLowerInvariant() ?? string.Empty;
-        var isMcpRoute = path == "/mcp" && context.Request.HttpMethod == "POST";
-        var response = !isMcpRoute && !_settingsService.Current.HttpServerEnabled
+        var response = ShouldBlockRestEndpoint(_settingsService.Current.HttpServerEnabled, path, context.Request.HttpMethod)
             ? new JsonObject
             {
                 ["error"] = "HTTP REST endpoints are disabled in BurrowWin Settings. Local stdio MCP remains available through /mcp."
@@ -283,7 +284,10 @@ public sealed class LocalMcpServerService : BackgroundService
                 Tool("burrow_info", "Return what BurrowWin is recording and where local MCP/HTTP state is stored."),
                 Tool("burrow_engine", "Return Mole engine availability for BurrowWin."),
                 Tool("burrow_analyze", "Analyze a directory and return a size-ranked tree. Uses native Windows fallback until Mole Windows exposes analyze JSON."),
-                Tool("burrow_uninstall", "List apps, preview leftovers, or launch a confirmed vendor uninstaller.")
+                Tool("burrow_list_apps", "Return installed Windows applications. Read-only."),
+                Tool("burrow_purge", "Preview Windows project artifact purge candidates. Real removal must be run from the BurrowWin GUI."),
+                Tool("burrow_installer", "Preview old installer/archive cleanup candidates. Real removal must be run from the BurrowWin GUI."),
+                Tool("burrow_uninstall", "Windows compatibility tool: list apps, preview leftovers, or launch a confirmed vendor uninstaller.")
             }
         };
     }
@@ -426,6 +430,9 @@ public sealed class LocalMcpServerService : BackgroundService
             "burrow_info" => await BuildInfoAsync(cancellationToken),
             "burrow_engine" => BuildHealth(),
             "burrow_analyze" => await AnalyzeAsync(arguments, cancellationToken),
+            "burrow_list_apps" => await ListAppsAsync(arguments, cancellationToken),
+            "burrow_purge" => await PreviewPurgeAsync(arguments, cancellationToken),
+            "burrow_installer" => await PreviewInstallerAsync(arguments, cancellationToken),
             "burrow_uninstall" => await UninstallAsync(arguments, cancellationToken),
             _ => new JsonObject { ["error"] = $"unknown tool: {name}" }
         };
@@ -864,7 +871,20 @@ public sealed class LocalMcpServerService : BackgroundService
                 ["max_depth"] = JsonSchemaInteger("Maximum recursive depth."),
                 ["max_children"] = JsonSchemaInteger("Maximum children per directory.")
             }),
-            McpTool("burrow_uninstall", "List apps, preview leftovers, or launch a confirmed vendor uninstaller.", new JsonObject
+            McpTool("burrow_list_apps", "Installed Windows applications and the IDs `burrow_uninstall` accepts. Read-only.", new JsonObject
+            {
+                ["search"] = JsonSchemaString("Optional search text."),
+                ["limit"] = JsonSchemaInteger("Maximum applications to return.")
+            }),
+            McpTool("burrow_purge", "Find project build artifacts using the Windows fallback preview. PREVIEW over MCP: real removal must be run from the BurrowWin GUI.", new JsonObject
+            {
+                ["confirm"] = JsonSchemaBoolean("Reserved. Real purge removal is GUI-only over Windows MCP; any value still returns the preview.")
+            }),
+            McpTool("burrow_installer", "Find leftover installer/archive files using the Windows fallback preview. PREVIEW over MCP: real removal must be run from the BurrowWin GUI.", new JsonObject
+            {
+                ["confirm"] = JsonSchemaBoolean("Reserved. Real installer cleanup is GUI-only over Windows MCP; any value still returns the preview.")
+            }),
+            McpTool("burrow_uninstall", "Windows compatibility tool: list apps, preview leftovers, or launch a confirmed vendor uninstaller.", new JsonObject
             {
                 ["action"] = JsonSchemaString("One of list, preview_leftovers, or launch_uninstaller."),
                 ["app_id"] = JsonSchemaString("Installed application ID returned by the list action."),
@@ -933,6 +953,58 @@ public sealed class LocalMcpServerService : BackgroundService
         return response.TryGetPropertyValue("succeeded", out var succeeded) &&
                succeeded is not null &&
                succeeded.GetValue<bool>() == false;
+    }
+
+    private async Task<JsonObject> ListAppsAsync(JsonObject arguments, CancellationToken cancellationToken)
+    {
+        var apps = await _installedApplicationService.GetInstalledApplicationsAsync(cancellationToken).ConfigureAwait(false);
+        var response = BuildUninstallList(apps, arguments);
+        response["tool"] = "burrow_list_apps";
+        return response;
+    }
+
+    private async Task<JsonObject> PreviewPurgeAsync(JsonObject arguments, CancellationToken cancellationToken)
+    {
+        if (!TryReadOptionalBoolean(arguments, "confirm", false, out var confirm, out var confirmError))
+        {
+            return ToolError(confirmError);
+        }
+
+        var projects = await _purgeArtifactService.PreviewAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        return new JsonObject
+        {
+            ["tool"] = "burrow_purge",
+            ["action"] = "preview",
+            ["source"] = "windows_native_fallback",
+            ["confirm_requested"] = confirm,
+            ["mcp_removal_supported"] = false,
+            ["note"] = "Windows MCP returns purge previews only. Run removal from the BurrowWin GUI so the user can review and confirm selections.",
+            ["count"] = projects.Count,
+            ["total_bytes"] = projects.Sum(project => project.TotalSizeBytes),
+            ["projects"] = new JsonArray(projects.Select(PurgeProjectToJson).ToArray<JsonNode?>())
+        };
+    }
+
+    private async Task<JsonObject> PreviewInstallerAsync(JsonObject arguments, CancellationToken cancellationToken)
+    {
+        if (!TryReadOptionalBoolean(arguments, "confirm", false, out var confirm, out var confirmError))
+        {
+            return ToolError(confirmError);
+        }
+
+        var candidates = await _installerCleanupService.PreviewAsync(cancellationToken).ConfigureAwait(false);
+        return new JsonObject
+        {
+            ["tool"] = "burrow_installer",
+            ["action"] = "preview",
+            ["source"] = "windows_native_fallback",
+            ["confirm_requested"] = confirm,
+            ["mcp_removal_supported"] = false,
+            ["note"] = "Windows MCP returns installer cleanup previews only. Run removal from the BurrowWin GUI so the user can review and confirm selections.",
+            ["count"] = candidates.Count,
+            ["total_bytes"] = candidates.Sum(candidate => candidate.SizeBytes),
+            ["candidates"] = new JsonArray(candidates.Select(InstallerCandidateToJson).ToArray<JsonNode?>())
+        };
     }
 
     private async Task<JsonObject> UninstallAsync(JsonObject arguments, CancellationToken cancellationToken)
@@ -1087,6 +1159,41 @@ public sealed class LocalMcpServerService : BackgroundService
         };
     }
 
+    private static JsonObject PurgeProjectToJson(PurgeProjectCandidate project)
+    {
+        return new JsonObject
+        {
+            ["name"] = project.Name,
+            ["path"] = project.Path,
+            ["marker"] = project.Marker,
+            ["total_size_bytes"] = project.TotalSizeBytes,
+            ["total_size_text"] = project.TotalSizeText,
+            ["artifact_count"] = project.ArtifactCount,
+            ["artifacts"] = new JsonArray(project.Artifacts.Select(artifact => new JsonObject
+            {
+                ["name"] = artifact.Name,
+                ["path"] = artifact.Path,
+                ["type"] = artifact.Type,
+                ["language"] = artifact.Language,
+                ["size_bytes"] = artifact.SizeBytes,
+                ["size_text"] = artifact.SizeText
+            }).ToArray<JsonNode?>())
+        };
+    }
+
+    private static JsonObject InstallerCandidateToJson(InstallerCleanupCandidate candidate)
+    {
+        return new JsonObject
+        {
+            ["name"] = candidate.Name,
+            ["path"] = candidate.Path,
+            ["kind"] = candidate.Kind,
+            ["size_bytes"] = candidate.SizeBytes,
+            ["size_text"] = candidate.SizeText,
+            ["last_write_time"] = candidate.LastWriteTime.ToString("O")
+        };
+    }
+
     private async Task RecordToolHistoryAsync(
         string name,
         JsonObject arguments,
@@ -1130,6 +1237,21 @@ public sealed class LocalMcpServerService : BackgroundService
         response.Headers["Cache-Control"] = "no-store";
         await response.OutputStream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
         response.Close();
+    }
+
+    internal static bool IsRequestAllowed(IPAddress? remoteAddress, string? origin)
+    {
+        return IsLoopback(remoteAddress) && IsAllowedOrigin(origin);
+    }
+
+    internal static bool ShouldBlockRestEndpoint(bool httpRestEnabled, string path, string method)
+    {
+        return !httpRestEnabled && !IsMcpRoute(path, method);
+    }
+
+    private static bool IsMcpRoute(string path, string method)
+    {
+        return path == "/mcp" && method.Equals("POST", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsLoopback(IPAddress? address)

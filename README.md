@@ -251,7 +251,7 @@ Everything is local and takes effect immediately unless noted:
 | **App language** | Follow the system, or force English / 简体中文 / 繁體中文 *(relaunch)*. |
 | **Menu-bar icon** | Show the menu-bar item, or run as a regular Dock app instead. |
 | **MCP / agent access** | Copyable stdio config + the tool list for Claude Code, Cursor, Codex, Cline, and any MCP client. |
-| **Local HTTP query server** | Optional loopback REST API + port for dashboards/curl *(relaunch)*. |
+| **Local HTTP query server** | Optional loopback REST endpoints + port for dashboards/curl. On Windows, disabling this keeps the local `/mcp` bridge available for stdio MCP. |
 | **Mole engine** | Shows the installed `mo` version, with a one-click **Update Mole**. |
 
 ## Permissions & Full Disk Access
@@ -356,9 +356,11 @@ Burrow drives the audited `mo` CLI. The honest privacy picture:
 - **No background root helper.** When Clean/Optimize need admin rights, macOS's
   own dialog asks you and Burrow runs that one `mo` command, then exits — you
   approve every elevation.
-- **Local-only surfaces:** the MCP HTTP server is loopback-only
-  (`127.0.0.1`) and history is stored locally. The macOS Updates tab runs
-  `brew outdated`, the same check `brew` does for itself.
+- **Local-only surfaces:** the MCP/HTTP surfaces bind to loopback only
+  (`127.0.0.1`) and history is stored locally. On Windows, the HTTP REST toggle
+  disables REST endpoints but keeps the local `/mcp` bridge route available for
+  stdio MCP clients. The macOS Updates tab runs `brew outdated`, the same check
+  `brew` does for itself.
 - **Unsigned preview builds:** macOS release zips and Windows preview artifacts
   are unsigned in the current repo state. Windows direct-download users should
   expect SmartScreen or stricter Application Control policy prompts.
@@ -422,9 +424,17 @@ Windows preview builds include the stdio bridge in source under
 - `burrow_process_usage` — rank processes by `cpu_time` / `peak_cpu` / `avg_cpu`
   / `peak_mem`, with the window it used echoed back
 - `burrow_info` — what Burrow is recording, retention, and freshness
+- `burrow_list_apps` — installed apps and the IDs/names uninstall tools accept
+- `burrow_purge` — preview project artifact purge candidates
+- `burrow_installer` — preview old installer/archive cleanup candidates
 
-There's also an optional localhost HTTP API (`127.0.0.1:9277` — `/health`,
-`/info`, `/snapshot`, `/metrics`) for dashboards or curl.
+Windows also keeps `burrow_uninstall(action=...)` as a compatibility tool for
+list, leftover-preview, and confirmed vendor-uninstaller launch workflows.
+
+There's also an optional localhost REST API (`127.0.0.1:9277` — `/health`,
+`/info`, `/snapshot`, `/metrics`) for dashboards or curl. On Windows, disabling
+REST in Settings does not close the loopback listener because the stdio MCP
+bridge still posts to `/mcp`.
 
 ## Develop & test
 

@@ -169,7 +169,7 @@
                             Text="AGENT" />
 
                         <StackPanel Grid.Row="1" Spacing="8">
-                            <TextBlock Style="{StaticResource SettingsFieldLabelStyle}" Text="HTTP server" />
+                            <TextBlock Style="{StaticResource SettingsFieldLabelStyle}" Text="HTTP REST endpoints" />
                             <ToggleSwitch
                                 IsOn="{Binding HttpServerEnabled, Mode=TwoWay}"
                                 Style="{StaticResource SettingsToggleSwitchStyle}" />
@@ -270,7 +270,7 @@
                         Grid.ColumnSpan="3"
                         FontFamily="{StaticResource BurrowMonoFont}"
                         Foreground="{StaticResource BurrowDimBrush}"
-                        Text="Sampling, tray visibility, HTTP enable and port, MCP destructive, and telemetry gates apply immediately. Telemetry is anonymous, opt-out, and only sends from signed release builds."
+                        Text="Sampling, tray visibility, REST endpoint enablement, port, MCP destructive gates, and telemetry apply immediately. The loopback MCP bridge remains local-only. Telemetry is anonymous, opt-out, and only sends from signed release builds."
                         TextWrapping="Wrap" />
                 </Grid>
             </Border>
