@@ -1,18 +1,12 @@
 {
   "_comment": "Source of truth for the site roadmap (docs/roadmap.html) and the README '## Roadmap' block. Edit this, then run `python3 scripts/site-release.py`. Columns render top to bottom; empty columns are skipped. Item fields: title (req), type (feat|fix|infra), issue (GitHub #, links to vote), note, version (for shipped — links to the changelog). Voting happens on GitHub issues (upvote) — keep this curated and honest; it's a guide, not a promise.",
-  "updated": "2026-06-20",
+  "updated": "2026-06-23",
   "columns": [
     {
       "key": "building",
       "title": "Building",
       "blurb": "In progress now.",
-      "items": [
-        {
-          "title": "One-click “Update with Homebrew”",
-          "type": "feat",
-          "note": "An Update button in the update prompt that runs `brew upgrade` and relaunches — the interim before signed auto-update."
-        }
-      ]
+      "items": []
     },
     {
       "key": "planned",
@@ -61,6 +55,9 @@
       "title": "Recently shipped",
       "blurb": "Landed in the latest releases.",
       "items": [
+        { "title": "No-freeze live dashboard", "version": "0.8.1" },
+        { "title": "Streaming live status (`mo status --watch`)", "version": "0.8.1" },
+        { "title": "One-click Update with Homebrew", "version": "0.8.1" },
         { "title": "A warm visual redesign", "version": "0.8.0" },
         { "title": "Ports & Get Online", "version": "0.8.0" },
         { "title": "Smart-Care Tune-Up", "version": "0.8.0" },

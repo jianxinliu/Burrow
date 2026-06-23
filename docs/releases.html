@@ -123,13 +123,50 @@
 <header class="hero page">
   <h1>Changelog</h1>
   <p>Every version at a glance — what it added, changed, and fixed. Full notes for each live on GitHub.</p>
-  <p class="count">11 releases · latest 0.8.0 · <a href="https://github.com/caezium/Burrow/releases" target="_blank" rel="noopener">GitHub releases ↗</a></p>
+  <p class="count">12 releases · latest 0.8.1 · <a href="https://github.com/caezium/Burrow/releases" target="_blank" rel="noopener">GitHub releases ↗</a></p>
 </header>
 
 <main class="page">
+    <article class="entry" id="v0.8.1">
+      <div class="ver-col">
+        <h2 class="ver">0.8.1<span class="latest">latest</span></h2>
+        <span class="date mono">Jun 23, 2026</span>
+        <a class="gh mono" href="https://github.com/caezium/Burrow/releases/tag/v0.8.1" target="_blank" rel="noopener">full notes ↗</a>
+      </div>
+      <div class="sbody">
+        <p class="lead">A stability release — no more dashboard freezes, live status now streams, a one-click Homebrew update, and the Windows preview's review closeout.</p>
+        <div class="sblock">
+          <div class="slabel mono">fixed</div>
+          <ul class="slist">
+            <li><b>No more App-Hang freezes.</b> The Overview dashboard re-rendered its whole grid — every chart tile and the full process table — once a second; now only the small Disk / Network tiles update that often, the rest on the snapshot.</li>
+            <li>Opening <b>Settings</b> and the <b>About</b> panel no longer blocks the main thread (login-item status, metrics-folder sizing, and the engine-version lookup moved off it).</li>
+            <li><b>PostHog telemetry</b> now flushes off the main thread instead of on a main-run-loop timer.</li>
+          </ul>
+        </div>
+        <div class="sblock">
+          <div class="slabel mono">changed</div>
+          <ul class="slist">
+            <li><b>Live status streams by default</b> — with Mole 1.44+, Burrow streams <code>mo status --watch</code> (NDJSON) instead of polling <code>mo status --json</code>: lower latency and less subprocess churn. Falls back to polling on older <code>mo</code> or a dropped stream.</li>
+          </ul>
+        </div>
+        <div class="sblock">
+          <div class="slabel mono">added</div>
+          <ul class="slist">
+            <li><b>Update with Homebrew</b> — for cask installs, the update prompt has a one-click button that runs <code>brew upgrade --cask burrow</code> and relaunches.</li>
+          </ul>
+        </div>
+        <div class="sblock">
+          <div class="slabel mono">windows preview</div>
+          <ul class="slist">
+            <li>Closed out the port review: MCP tool parity with macOS (<code>burrow_list_apps</code>, <code>burrow_purge</code>, <code>burrow_installer</code> — preview-only over MCP), stdio MCP that survives the HTTP toggle, brand assets / palette / fonts / icon aligned to the Mac, honest docs, and MCP + deletion-guard tests. Earlier rounds added Recycle-Bin routing, a drive-root guard, and SHA-256 verification of the bundled engine. Still an unsigned, build-from-source preview.</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
     <article class="entry" id="v0.8.0">
       <div class="ver-col">
-        <h2 class="ver">0.8.0<span class="latest">latest</span></h2>
+        <h2 class="ver">0.8.0</h2>
         <span class="date mono">Jun 20, 2026</span>
         <a class="gh mono" href="https://github.com/caezium/Burrow/releases/tag/v0.8.0" target="_blank" rel="noopener">full notes ↗</a>
       </div>

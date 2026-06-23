@@ -2,6 +2,71 @@
   "_comment": "Source of truth for the site's release history. Newest first. Edit this, then run `python3 scripts/site-release.py` to regenerate the homepage 'New in X' section and releases.html. Icons/colors: run `python3 scripts/site-release.py --list-icons`.",
   "releases": [
     {
+      "version": "0.8.1",
+      "date": "2026-06-23",
+      "tag": "v0.8.1",
+      "tagline": "A stability release — no more dashboard freezes, live status now streams, a one-click Homebrew update, and the Windows preview's review closeout.",
+      "highlights": [
+        {
+          "icon": "gauge",
+          "color": "teal",
+          "title": "No more freezes",
+          "line": "The live dashboard re-rendered its whole grid every second; now only the small Disk/Network tiles do. The App-Hang freezes are gone, and Settings/About open instantly."
+        },
+        {
+          "icon": "pulse",
+          "color": "azure",
+          "title": "Streaming live status",
+          "line": "With Mole 1.44+, status streams over `mo status --watch` (NDJSON) by default instead of polling — lower latency, less churn. Falls back to polling automatically."
+        },
+        {
+          "icon": "package",
+          "color": "coral",
+          "title": "Update with Homebrew",
+          "line": "Cask installs get a one-click button in the update prompt that runs `brew upgrade` and relaunches."
+        },
+        {
+          "icon": "monitor",
+          "color": "gold",
+          "title": "Windows preview review",
+          "line": "Closed out the port review — MCP parity with the Mac, brand assets aligned, honest docs, and deletion-safety + test coverage."
+        }
+      ],
+      "chips": [
+        "PostHog telemetry now flushes off the main thread",
+        "Login-item status, metrics-folder sizing, and the engine-version lookup moved off the main thread",
+        "Windows: Recycle-Bin routing, drive-root guard, and SHA-256 verification of the bundled engine"
+      ],
+      "sections": [
+        {
+          "label": "fixed",
+          "items": [
+            "**No more App-Hang freezes.** The Overview dashboard re-rendered its whole grid — every chart tile and the full process table — once a second; now only the small Disk / Network tiles update that often, the rest on the snapshot.",
+            "Opening **Settings** and the **About** panel no longer blocks the main thread (login-item status, metrics-folder sizing, and the engine-version lookup moved off it).",
+            "**PostHog telemetry** now flushes off the main thread instead of on a main-run-loop timer."
+          ]
+        },
+        {
+          "label": "changed",
+          "items": [
+            "**Live status streams by default** — with Mole 1.44+, Burrow streams `mo status --watch` (NDJSON) instead of polling `mo status --json`: lower latency and less subprocess churn. Falls back to polling on older `mo` or a dropped stream."
+          ]
+        },
+        {
+          "label": "added",
+          "items": [
+            "**Update with Homebrew** — for cask installs, the update prompt has a one-click button that runs `brew upgrade --cask burrow` and relaunches."
+          ]
+        },
+        {
+          "label": "windows preview",
+          "items": [
+            "Closed out the port review: MCP tool parity with macOS (`burrow_list_apps`, `burrow_purge`, `burrow_installer` — preview-only over MCP), stdio MCP that survives the HTTP toggle, brand assets / palette / fonts / icon aligned to the Mac, honest docs, and MCP + deletion-guard tests. Earlier rounds added Recycle-Bin routing, a drive-root guard, and SHA-256 verification of the bundled engine. Still an unsigned, build-from-source preview."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.8.0",
       "date": "2026-06-20",
       "tag": "v0.8.0",
